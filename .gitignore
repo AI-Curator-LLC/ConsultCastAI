@@ -1,6 +1,10 @@
 # Local session storage (default CONSULTCASTAI_LOCAL_STORE=1 mode)
 sessions_local.json
 
+# Local user accounts (default CONSULTCASTAI_LOCAL_USERS=1 mode), contains
+# password hashes, never commit
+users_local.db
+
 # Local dev server logs
 uvicorn_out.log
 

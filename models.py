@@ -4,6 +4,16 @@ import uuid
 from pydantic import BaseModel, Field
 
 
+class SignupRequest(BaseModel):
+    email: str
+    password: str
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
 class ConversationTurn(BaseModel):
     role: str  # "user" (consultant) | "assistant" (persona)
     content: str

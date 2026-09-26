@@ -11,11 +11,12 @@ storage required by default, see README.md for the local -> production path.
 
 import os
 import re
+import secrets
 import time
 
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, RedirectResponse
 
 import auth
 import claude_client
@@ -23,8 +24,12 @@ import anam_client
 import content
 import coaching
 import docx_builder
+import emailer
 import store
+import users
 from models import (
+    SignupRequest,
+    LoginRequest,
     SessionRecord,
     ConversationTurn,
     StartSessionRequest,
@@ -78,6 +83,74 @@ app.add_middleware(
 
 _coaching_state: dict[str, coaching.CoachingState] = {}
 _start_time: dict[str, float] = {}
+
+
+def _frontend_url() -> str:
+    return os.environ.get("CONSULTCASTAI_FRONTEND_URL", "http://localhost:5500").rstrip("/")
+
+
+def _issue_or_500(user: users.User) -> str:
+    try:
+        return users.issue_token(user)
+    except RuntimeError as exc:
+        print(f"[consultcastai] cannot issue token: {exc}")
+        raise HTTPException(status_code=500, detail="Access control is not configured")
+
+
+@app.post("/auth/signup")
+def signup(req: SignupRequest, background_tasks: BackgroundTasks):
+    email = users.normalize_email(req.email)
+    if not users.is_valid_email(email):
+        raise HTTPException(400, "Invalid email address")
+    problem = users.password_problem(req.password)
+    if problem:
+        raise HTTPException(400, problem)
+    if users.get_user_by_email(email):
+        raise HTTPException(409, "An account with this email already exists")
+
+    verification_token = secrets.token_urlsafe(32)
+    try:
+        user = users.create_user(email, users.hash_password(req.password), verification_token)
+    except users.EmailTaken:
+        raise HTTPException(409, "An account with this email already exists")
+
+    # Soft requirement: sent after the response, and send_verification_email
+    # swallows its own errors, so a failed email can never block signup.
+    background_tasks.add_task(emailer.send_verification_email, user.email, verification_token)
+
+    return {"token": _issue_or_500(user), "email": user.email, "email_verified": False}
+
+
+@app.post("/auth/login")
+def login(req: LoginRequest):
+    user = users.get_user_by_email(req.email)
+    if not user:
+        users.burn_password_check(req.password)  # same response time whether or not the email exists
+        raise HTTPException(401, "Incorrect email or password")
+    if not users.verify_password(req.password, user.password_hash):
+        raise HTTPException(401, "Incorrect email or password")
+    return {"token": _issue_or_500(user), "email": user.email, "email_verified": user.email_verified}
+
+
+@app.get("/auth/verify")
+def verify_email(token: str):
+    user = users.get_user_by_verification_token(token)
+    if not user:
+        return RedirectResponse(f"{_frontend_url()}/?verified=invalid")
+    users.mark_verified(user.id)
+    return RedirectResponse(f"{_frontend_url()}/?verified=1")
+
+
+@app.get("/auth/me")
+def me(user: auth.AuthUser = Depends(auth.verify_user)):
+    """Lets the frontend ask "am I logged in?" on load. In local dev-bypass
+    mode this succeeds as the dev user, so the login screen is skipped."""
+    if auth.is_dev_bypass():
+        return {"email": user.email, "email_verified": True, "dev_bypass": True}
+    account = users.get_user_by_id(user.rep_id)
+    if not account:
+        raise HTTPException(401, "Account no longer exists, please log in again")
+    return {"email": account.email, "email_verified": account.email_verified, "dev_bypass": False}
 
 
 @app.get("/personas")

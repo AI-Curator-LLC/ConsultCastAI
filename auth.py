@@ -1,28 +1,23 @@
 """
-Authentication: simple bearer API keys, not full SSO.
+Authentication: real user accounts (email + password) issuing signed JWTs.
 
-ConsultCastAI is a solo-founder / small-cohort product (AI Curator LLC), not an
-enterprise deployment behind a customer's IdP, so full SSO is over-engineered
-for where this is right now. Instead:
+Accounts live in users.py (signup/login/verification) and prove identity
+via a stateless bearer token, so there's no server-side session table: the
+signed token itself is the proof, checked here on every request.
 
-- Each rep (consultant) gets an issued API key, set server-side via the
-  CONSULTCASTAI_API_KEYS env var: a comma-separated list of "key:rep_id" pairs,
-  e.g. "sk_abc123:scott,sk_def456:jane".
-- The Authorization: Bearer <key> header is matched against that list.
-- If the env var is unset, auth FAILS CLOSED (500), never admits everyone.
+- The Authorization: Bearer <jwt> header is decoded and verified against
+  CONSULTCASTAI_JWT_SECRET (see users.decode_token).
+- If that secret is missing in production, auth FAILS CLOSED (500), never
+  admits everyone.
 - A local-dev bypass exists for zero-setup local testing. It is DELIBERATELY
   independent of which storage backend is active (CONSULTCASTAI_DEV_AUTH_BYPASS,
   see _dev_bypass_enabled below): storage backend and "should auth be
-  enforced" are separate questions. A deploy can use local-JSON storage
-  (e.g. on a Render disk, no cloud DB needed) while still requiring real
-  API keys, or use a real database while still bypassing auth for local
-  testing against it. Defaults to matching local-store mode when unset, so
-  the zero-setup local dev experience is unchanged unless you opt in.
+  enforced" are separate questions. Defaults to matching local-store mode
+  when unset, so the zero-setup local dev experience is unchanged unless
+  you opt in.
 
-This is intentionally swappable: when ConsultCastAI has real customers with
-their own IdPs, replace verify_user's body with Firebase/Auth0/Okta token
-verification and nothing else in the app needs to change, every route
-depends on AuthUser, not on how it was produced.
+Every route depends on AuthUser, not on how it was produced, so swapping
+auth mechanisms again later only touches verify_user's body.
 """
 
 import os
@@ -31,9 +26,8 @@ from dataclasses import dataclass
 from fastapi import Header, HTTPException
 
 import store
+import users
 
-_API_KEYS_ENV = "CONSULTCASTAI_API_KEYS"     # "key:rep_id,key:rep_id"
-_ADMIN_REPS_ENV = "CONSULTCASTAI_ADMIN_REPS"  # comma-separated rep_ids
 _DEV_AUTH_BYPASS_ENV = "CONSULTCASTAI_DEV_AUTH_BYPASS"  # "1"/"0", overrides the storage-based default
 
 
@@ -42,23 +36,6 @@ class AuthUser:
     rep_id: str
     email: str
     is_admin: bool
-
-
-def _key_map() -> dict[str, str]:
-    raw = os.environ.get(_API_KEYS_ENV, "")
-    pairs = {}
-    for entry in raw.split(","):
-        entry = entry.strip()
-        if not entry or ":" not in entry:
-            continue
-        key, rep_id = entry.split(":", 1)
-        pairs[key.strip()] = rep_id.strip()
-    return pairs
-
-
-def _admin_reps() -> set[str]:
-    raw = os.environ.get(_ADMIN_REPS_ENV, "")
-    return {r.strip() for r in raw.split(",") if r.strip()}
 
 
 def _dev_bypass_enabled() -> bool:
@@ -72,30 +49,28 @@ def _dev_bypass_enabled() -> bool:
     return store.using_local_store()
 
 
+def is_dev_bypass() -> bool:
+    return _dev_bypass_enabled()
+
+
 def verify_user(authorization: str | None = Header(default=None)) -> AuthUser:
     """FastAPI dependency: returns the verified caller, or raises 401/500."""
     if _dev_bypass_enabled():
         return AuthUser(rep_id="dev", email="dev@localhost", is_admin=True)
 
-    keys = _key_map()
-    if not keys:
-        print(
-            "[consultcastai] auth FAIL-CLOSED: CONSULTCASTAI_API_KEYS is unset and "
-            "the dev bypass is off -> refusing with 500. For local dev set "
-            "CONSULTCASTAI_LOCAL_STORE=1 (or CONSULTCASTAI_DEV_AUTH_BYPASS=1 "
-            "explicitly); for a real deploy set the key map."
-        )
-        raise HTTPException(status_code=500, detail="Access control is not configured")
-
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing bearer token")
     token = authorization.split(" ", 1)[1].strip()
 
-    rep_id = keys.get(token)
-    if not rep_id:
-        raise HTTPException(status_code=401, detail="Invalid API key")
+    try:
+        payload = users.decode_token(token)
+    except RuntimeError as exc:
+        print(f"[consultcastai] auth FAIL-CLOSED: {exc} -> refusing with 500.")
+        raise HTTPException(status_code=500, detail="Access control is not configured")
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid or expired session, please log in again")
 
-    return AuthUser(rep_id=rep_id, email=f"{rep_id}@consultcastai", is_admin=rep_id in _admin_reps())
+    return AuthUser(rep_id=payload["sub"], email=payload["email"], is_admin=payload.get("is_admin", False))
 
 
 def require_owner(session_rep_id: str, user: AuthUser) -> None:

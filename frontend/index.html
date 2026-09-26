@@ -281,6 +281,32 @@
   footer img{height:44px; width:auto; opacity:0.85;}
   footer .fine{color:var(--text-faint); font-size:10.5px; font-family:var(--font-mono); letter-spacing:0.3px;}
 
+  /* --- Login / signup + verification banner --- */
+  .user-email{font-family:var(--font-mono); font-size:10.5px; color:var(--text-dim);}
+  .verify-banner{
+    display:flex; align-items:center; justify-content:space-between; gap:12px;
+    font-size:12.5px; line-height:1.4; color:var(--text-dim); background:var(--bg-panel-2);
+    border:1px solid rgba(255,184,77,0.3); border-radius:10px; padding:10px 14px; margin:-8px 0 16px;
+  }
+  .verify-banner.success{border-color:rgba(51,230,165,0.35); color:var(--good);}
+  .auth-screen{
+    position:fixed; inset:0; z-index:100; overflow-y:auto; padding:20px;
+    display:flex; align-items:center; justify-content:center; background:var(--bg);
+  }
+  .auth-card{width:100%; max-width:400px; padding:26px;}
+  .auth-brand{display:flex; align-items:center; gap:10px; margin-bottom:18px;}
+  .auth-brand img{height:34px; width:auto;}
+  .text-input{
+    width:100%; background:var(--bg-panel-2); border:1px solid var(--border); color:var(--text);
+    padding:12px 13px; border-radius:10px; font-size:14px; font-family:var(--font-body);
+  }
+  .text-input:focus{outline:none; border-color:var(--border-bright);}
+  .auth-error{font-size:12.5px; color:var(--danger); margin:0 0 12px; line-height:1.4;}
+  .auth-note{font-size:12.5px; color:var(--text-dim); margin:0 0 14px; line-height:1.4;}
+  .auth-switch{margin:16px 0 0; text-align:center; font-size:12.5px; color:var(--text-dim);}
+  .auth-switch a{color:var(--blue-glow); font-weight:600; cursor:pointer;}
+  .auth-switch a:hover{text-decoration:underline;}
+
   /* --- Collapse to single column below 900px --- */
   /* The three columns shrink together (see the minmax() floors on
      .session-grid above) all the way down from 1500px; this only fires
@@ -328,15 +354,23 @@
     </div>
     <div class="conn">
       <span class="badge" id="statusBadge">connecting</span>
+      <span class="user-email hidden" id="userEmail"></span>
       <button class="adv-toggle" onclick="openAssessment(null)">new AI assessment</button>
       <button class="adv-toggle" onclick="toggleAdv()">connection settings</button>
+      <button class="adv-toggle hidden" id="logoutBtn" onclick="logout()">log out</button>
       <div class="adv-panel" id="advPanel">
         <input id="apiBase" placeholder="API base URL" value="http://localhost:8081" />
-        <input id="apiKey" placeholder="API key (blank for local dev)" type="password" />
         <button class="btn-sm" onclick="saveConfig()">Reconnect</button>
       </div>
     </div>
   </header>
+
+  <!-- Non-blocking: shown for an unverified email, or after clicking the
+       verification link (?verified=1 / ?verified=invalid). Never gates access. -->
+  <div class="verify-banner hidden" id="verifyBanner">
+    <span id="verifyBannerText"></span>
+    <button class="adv-toggle" onclick="dismissBanner()">dismiss</button>
+  </div>
 
   <div class="session-grid">
 
@@ -512,6 +546,39 @@
   </footer>
 </div>
 
+<!-- Login / signup. Shown when /auth/me says we're not logged in (or a request
+     comes back 401 because the token expired); never shown in local dev-bypass mode. -->
+<div id="authScreen" class="auth-screen hidden">
+  <div class="panel auth-card">
+    <div class="auth-brand">
+      <img src="assets/ccai-icon.png" alt="" />
+      <span class="brand-text">ConsultCast<span class="ai">AI</span></span>
+    </div>
+    <h2 id="authTitle">Log in</h2>
+    <p class="auth-note hidden" id="authNote"></p>
+    <form id="authForm" novalidate>
+      <div class="field">
+        <span class="field-label">Email</span>
+        <input class="text-input" id="authEmail" type="email" autocomplete="email" />
+      </div>
+      <div class="field">
+        <span class="field-label">Password</span>
+        <input class="text-input" id="authPassword" type="password" autocomplete="current-password" />
+      </div>
+      <div class="field hidden" id="authConfirmField">
+        <span class="field-label">Confirm password</span>
+        <input class="text-input" id="authConfirm" type="password" autocomplete="new-password" />
+      </div>
+      <p class="auth-error hidden" id="authError"></p>
+      <button class="btn block" id="authSubmitBtn" type="submit">Log in</button>
+    </form>
+    <p class="auth-switch">
+      <span id="authSwitchText">New here?</span>
+      <a id="authSwitchLink" role="button" tabindex="0" onclick="toggleAuthMode()">Create an account</a>
+    </p>
+  </div>
+</div>
+
 <script type="module">
 import { createClient, AnamEvent } from "https://cdn.jsdelivr.net/npm/@anam-ai/js-sdk@4/+esm";
 
@@ -529,9 +596,11 @@ document.getElementById('clientBriefAiLink').href = CLIENTBRIEFAI_URL;
 // saved to localStorage, so it's a one-time fix per browser.
 const _IS_LOCAL = ['localhost', '127.0.0.1'].includes(location.hostname) || location.protocol === 'file:';
 let API_BASE = localStorage.getItem('consultcastai_base') || (_IS_LOCAL ? 'http://localhost:8081' : 'https://consultcastai-api.onrender.com');
-let API_KEY = localStorage.getItem('consultcastai_key') || '';
+// Session token (a JWT issued by /auth/login or /auth/signup). Replaces the
+// old manually-typed API key, so drop any leftover one.
+let TOKEN = localStorage.getItem('consultcastai_token') || '';
+localStorage.removeItem('consultcastai_key');
 document.getElementById('apiBase').value = API_BASE;
-document.getElementById('apiKey').value = API_KEY;
 
 let personas = [];
 let currentPersona = null;
@@ -694,21 +763,172 @@ window.toggleAdv = function(){ document.getElementById('advPanel').classList.tog
 
 window.saveConfig = function(){
   API_BASE = document.getElementById('apiBase').value.trim().replace(/\/$/, '');
-  API_KEY = document.getElementById('apiKey').value.trim();
   localStorage.setItem('consultcastai_base', API_BASE);
-  localStorage.setItem('consultcastai_key', API_KEY);
   loadPersonas();
+  checkAuth();
 };
 
 async function api(path, opts={}){
   const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
-  if(API_KEY) headers['Authorization'] = 'Bearer ' + API_KEY;
+  if(TOKEN) headers['Authorization'] = 'Bearer ' + TOKEN;
   const res = await fetch(API_BASE + path, { ...opts, headers });
   if(!res.ok){
     const body = await res.text().catch(()=> '');
-    throw new Error(`${res.status}: ${body}`);
+    if(res.status === 401) handleUnauthorized();
+    const err = new Error(`${res.status}: ${body}`);
+    err.status = res.status;
+    throw err;
   }
   return res.json();
+}
+
+// --- Login / signup ---
+let authMode = 'login';
+let flashBanner = false; // a ?verified=... message is showing, don't overwrite it with the generic prompt
+
+function clearToken(){
+  TOKEN = '';
+  localStorage.removeItem('consultcastai_token');
+}
+
+function handleUnauthorized(){
+  const hadToken = !!TOKEN;
+  clearToken();
+  document.getElementById('logoutBtn').classList.add('hidden');
+  document.getElementById('userEmail').classList.add('hidden');
+  showAuthScreen('login', hadToken ? 'Your session expired, please log in again.' : '');
+}
+
+function showAuthScreen(mode, note){
+  setAuthMode(mode);
+  const noteEl = document.getElementById('authNote');
+  noteEl.textContent = note || '';
+  noteEl.classList.toggle('hidden', !note);
+  document.getElementById('authScreen').classList.remove('hidden');
+  setTimeout(() => document.getElementById('authEmail').focus(), 0);
+}
+
+function hideAuthScreen(){
+  document.getElementById('authScreen').classList.add('hidden');
+  document.getElementById('authPassword').value = '';
+  document.getElementById('authConfirm').value = '';
+  showAuthError('');
+}
+
+function setAuthMode(mode){
+  authMode = mode;
+  const signup = mode === 'signup';
+  document.getElementById('authTitle').textContent = signup ? 'Create your account' : 'Log in';
+  document.getElementById('authSubmitBtn').textContent = signup ? 'Create account' : 'Log in';
+  document.getElementById('authConfirmField').classList.toggle('hidden', !signup);
+  document.getElementById('authPassword').autocomplete = signup ? 'new-password' : 'current-password';
+  document.getElementById('authSwitchText').textContent = signup ? 'Already have an account?' : 'New here?';
+  document.getElementById('authSwitchLink').textContent = signup ? 'Log in' : 'Create an account';
+  showAuthError('');
+}
+
+window.toggleAuthMode = function(){
+  document.getElementById('authNote').classList.add('hidden');
+  setAuthMode(authMode === 'login' ? 'signup' : 'login');
+};
+
+function showAuthError(msg){
+  const el = document.getElementById('authError');
+  el.textContent = msg;
+  el.classList.toggle('hidden', !msg);
+}
+
+async function submitAuth(e){
+  e.preventDefault();
+  const email = document.getElementById('authEmail').value.trim();
+  const password = document.getElementById('authPassword').value;
+  const confirm = document.getElementById('authConfirm').value;
+
+  if(!email || !password){ showAuthError('Enter your email and password.'); return; }
+  if(authMode === 'signup'){
+    // The server enforces this too, this is just a faster error message.
+    if(password.length < 8){ showAuthError('Password must be at least 8 characters.'); return; }
+    if(password !== confirm){ showAuthError('Passwords do not match.'); return; }
+  }
+
+  const btn = document.getElementById('authSubmitBtn');
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = authMode === 'signup' ? 'Creating account…' : 'Logging in…';
+  showAuthError('');
+  try{
+    // Deliberately not api(): a 401 here means "wrong password", not
+    // "session expired", so it must not trigger handleUnauthorized().
+    const res = await fetch(API_BASE + (authMode === 'signup' ? '/auth/signup' : '/auth/login'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    let data = null;
+    try{ data = await res.json(); }catch(_){ /* non-JSON error body */ }
+    if(!res.ok){
+      showAuthError(data && typeof data.detail === 'string' ? data.detail : `Something went wrong (${res.status}), check your details and try again.`);
+      return;
+    }
+    TOKEN = data.token;
+    localStorage.setItem('consultcastai_token', TOKEN);
+    hideAuthScreen();
+    onAuthenticated({ email: data.email, email_verified: data.email_verified, dev_bypass: false });
+  }catch(err){
+    showAuthError('Could not reach the server. Check your connection and try again.');
+  }finally{
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+}
+document.getElementById('authForm').addEventListener('submit', submitAuth);
+
+function showBanner(text, success){
+  document.getElementById('verifyBannerText').textContent = text;
+  const el = document.getElementById('verifyBanner');
+  el.classList.toggle('success', !!success);
+  el.classList.remove('hidden');
+}
+
+window.dismissBanner = function(){
+  document.getElementById('verifyBanner').classList.add('hidden');
+};
+
+function onAuthenticated(me){
+  const emailEl = document.getElementById('userEmail');
+  emailEl.textContent = me.email;
+  emailEl.classList.toggle('hidden', !!me.dev_bypass);
+  document.getElementById('logoutBtn').classList.toggle('hidden', !TOKEN);
+  if(flashBanner) return;
+  if(me.email_verified) window.dismissBanner();
+  else showBanner('Verify your email: check your inbox for the link we sent. Nothing is locked in the meantime.');
+}
+
+async function checkAuth(){
+  try{
+    const me = await api('/auth/me'); // a 401 here already raises the login screen via api()
+    hideAuthScreen();
+    onAuthenticated(me);
+  }catch(e){
+    console.warn('Auth check did not complete:', e.message);
+  }
+}
+
+window.logout = function(){
+  clearToken();
+  location.reload(); // simplest full reset: stops any avatar/camera/mic and lands on the login screen
+};
+
+// The emailed verification link redirects back here with ?verified=1 (or
+// ?verified=invalid for a bad/already-used link).
+function handleVerifiedParam(){
+  const params = new URLSearchParams(location.search);
+  const v = params.get('verified');
+  if(!v) return;
+  flashBanner = true;
+  if(v === '1') showBanner('Email verified, thanks!', true);
+  else showBanner('That verification link is invalid or was already used.');
+  history.replaceState(null, '', location.pathname);
 }
 
 async function loadPersonas(){
@@ -1370,7 +1590,7 @@ window.downloadAssessmentDocx = async function(){
 
   try{
     const headers = { 'Content-Type': 'application/json' };
-    if(API_KEY) headers['Authorization'] = 'Bearer ' + API_KEY;
+    if(TOKEN) headers['Authorization'] = 'Bearer ' + TOKEN;
     const res = await fetch(API_BASE + '/assessment/docx', {
       method: 'POST',
       headers,
@@ -1378,6 +1598,7 @@ window.downloadAssessmentDocx = async function(){
     });
     if(!res.ok){
       const body = await res.text().catch(()=> '');
+      if(res.status === 401) handleUnauthorized();
       throw new Error(`${res.status}: ${body}`);
     }
     const blob = await res.blob();
@@ -1394,7 +1615,9 @@ window.downloadAssessmentDocx = async function(){
   }
 };
 
+handleVerifiedParam();
 loadPersonas();
+checkAuth();
 </script>
 </body>
 </html>

@@ -2,10 +2,17 @@
 # static frontend, deployed together. Deploy by connecting this repo in
 # the Render dashboard: New -> Blueprint.
 #
-# Storage: local-JSON on a persistent Render Disk, not Firestore, consistent
-# with the rest of this deploy staying entirely on Render, no GCP involved.
-# Fine at solo-founder/small-cohort scale; if this ever needs multiple
-# instances or heavier concurrency, swap storage backends then, not before.
+# Storage: practice sessions are local-JSON and user accounts are a local
+# SQLite file, both on the persistent Render Disk below, not Firestore or a
+# managed database, consistent with the rest of this deploy staying entirely
+# on Render. Fine at solo-founder/small-cohort scale (single instance; a
+# service with a disk attached can't scale out anyway).
+#
+# User accounts could instead live in Render Postgres (users.py supports it:
+# CONSULTCASTAI_LOCAL_USERS=0 + DATABASE_URL + psycopg2-binary in
+# requirements.txt), but Render's FREE Postgres tier expires after 30 days,
+# which would delete every account, so that's deliberately not declared here.
+# If you add one, use a paid plan.
 services:
   - type: web
     name: consultcastai-api
@@ -25,15 +32,15 @@ services:
         sync: false
       - key: ANAM_API_KEY
         sync: false
-      - key: CONSULTCASTAI_API_KEYS  # "sk_...:scott,sk_...:jane"
+      - key: CONSULTCASTAI_JWT_SECRET  # signs login tokens: a long random string (32+ chars), generate once, never commit
         sync: false
-      - key: CONSULTCASTAI_ADMIN_REPS  # optional, comma-separated rep_ids
+      - key: RESEND_API_KEY  # verification emails; unset just skips sending, it never blocks signup
         sync: false
       - key: CONSULTCASTAI_ALLOWED_ORIGINS  # the frontend's Render URL, e.g. "https://consultcastai-frontend.onrender.com"
         sync: false
 
-      # Fixed for this deploy shape (local-JSON storage on the disk above,
-      # real auth enforced, production CORS mode). Change here, not in the
+      # Fixed for this deploy shape (local storage on the disk above, real
+      # auth enforced, production CORS mode). Change here, not in the
       # dashboard, so it stays in version control.
       - key: CONSULTCASTAI_ENV
         value: production
@@ -41,8 +48,17 @@ services:
         value: "1"
       - key: CONSULTCASTAI_LOCAL_STORE_PATH
         value: /data/sessions_local.json
+      - key: CONSULTCASTAI_LOCAL_USERS
+        value: "1"
+      - key: CONSULTCASTAI_USERS_DB_PATH
+        value: /data/users.db
       - key: CONSULTCASTAI_DEV_AUTH_BYPASS
         value: "0"  # the whole point of this deploy: local storage, real auth
+      # Where the emailed verification link points, and where it lands afterward.
+      - key: CONSULTCASTAI_BACKEND_URL
+        value: https://consultcastai-api.onrender.com
+      - key: CONSULTCASTAI_FRONTEND_URL
+        value: https://consultcastai-frontend.onrender.com
 
   # Static frontend: only frontend/ is published (index.html + assets/),
   # kept in its own directory specifically so this can't accidentally
