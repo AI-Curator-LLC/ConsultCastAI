@@ -36,7 +36,7 @@ services:
         sync: false
       - key: RESEND_API_KEY  # verification emails; unset just skips sending, it never blocks signup
         sync: false
-      - key: CONSULTCASTAI_ALLOWED_ORIGINS  # the frontend's Render URL, e.g. "https://consultcastai-frontend.onrender.com"
+      - key: CONSULTCASTAI_ALLOWED_ORIGINS  # comma-separated, exact origins, no trailing slash. Must list EVERY address the frontend is served from (the onrender.com URL and the custom domain), or the browser blocks its API calls
         sync: false
 
       # Fixed for this deploy shape (local storage on the disk above, real
@@ -58,7 +58,7 @@ services:
       - key: CONSULTCASTAI_BACKEND_URL
         value: https://consultcastai-api.onrender.com
       - key: CONSULTCASTAI_FRONTEND_URL
-        value: https://consultcastai-frontend.onrender.com
+        value: https://consultcastai.ai-curator.ai  # the custom domain, so emailed reset/verify links land there, not on the onrender.com address
 
   # Static frontend: only frontend/ is published (index.html + assets/),
   # kept in its own directory specifically so this can't accidentally
