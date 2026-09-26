@@ -303,6 +303,10 @@
   .text-input:focus{outline:none; border-color:var(--border-bright);}
   .auth-error{font-size:12.5px; color:var(--danger); margin:0 0 12px; line-height:1.4;}
   .auth-note{font-size:12.5px; color:var(--text-dim); margin:0 0 14px; line-height:1.4;}
+  .auth-forgot{margin:-6px 0 14px; font-size:12px;}
+  .auth-forgot a{color:var(--text-dim); cursor:pointer; text-decoration:underline; text-underline-offset:3px;}
+  .auth-forgot a:hover{color:var(--text);}
+  .auth-note.success{color:var(--good);}
   .auth-switch{margin:16px 0 0; text-align:center; font-size:12.5px; color:var(--text-dim);}
   .auth-switch a{color:var(--blue-glow); font-weight:600; cursor:pointer;}
   .auth-switch a:hover{text-decoration:underline;}
@@ -557,18 +561,21 @@
     <h2 id="authTitle">Log in</h2>
     <p class="auth-note hidden" id="authNote"></p>
     <form id="authForm" novalidate>
-      <div class="field">
+      <div class="field" id="authEmailField">
         <span class="field-label">Email</span>
         <input class="text-input" id="authEmail" type="email" autocomplete="email" />
       </div>
-      <div class="field">
-        <span class="field-label">Password</span>
+      <div class="field" id="authPasswordField">
+        <span class="field-label" id="authPasswordLabel">Password</span>
         <input class="text-input" id="authPassword" type="password" autocomplete="current-password" />
       </div>
       <div class="field hidden" id="authConfirmField">
         <span class="field-label">Confirm password</span>
         <input class="text-input" id="authConfirm" type="password" autocomplete="new-password" />
       </div>
+      <p class="auth-forgot" id="authForgotWrap">
+        <a id="authForgotLink" role="button" tabindex="0" onclick="showForgot()">Forgot password?</a>
+      </p>
       <p class="auth-error hidden" id="authError"></p>
       <button class="btn block" id="authSubmitBtn" type="submit">Log in</button>
     </form>
@@ -783,8 +790,9 @@ async function api(path, opts={}){
 }
 
 // --- Login / signup ---
-let authMode = 'login';
+let authMode = 'login'; // 'login' | 'signup' | 'forgot' | 'reset'
 let flashBanner = false; // a ?verified=... message is showing, don't overwrite it with the generic prompt
+let resetToken = null;   // from the emailed ?reset_token=... link, held only in memory
 
 function clearToken(){
   TOKEN = '';
@@ -796,16 +804,15 @@ function handleUnauthorized(){
   clearToken();
   document.getElementById('logoutBtn').classList.add('hidden');
   document.getElementById('userEmail').classList.add('hidden');
+  if(resetToken) return; // mid password-reset: keep that screen up, don't swap it for the login form
   showAuthScreen('login', hadToken ? 'Your session expired, please log in again.' : '');
 }
 
 function showAuthScreen(mode, note){
   setAuthMode(mode);
-  const noteEl = document.getElementById('authNote');
-  noteEl.textContent = note || '';
-  noteEl.classList.toggle('hidden', !note);
+  setAuthNote(note);
   document.getElementById('authScreen').classList.remove('hidden');
-  setTimeout(() => document.getElementById('authEmail').focus(), 0);
+  setTimeout(() => document.getElementById(mode === 'reset' ? 'authPassword' : 'authEmail').focus(), 0);
 }
 
 function hideAuthScreen(){
@@ -815,21 +822,47 @@ function hideAuthScreen(){
   showAuthError('');
 }
 
+const AUTH_MODES = {
+  login:  { title: 'Log in',               submit: 'Log in',          busy: 'Logging in…',       switchText: 'New here?',              switchLink: 'Create an account' },
+  signup: { title: 'Create your account',  submit: 'Create account',  busy: 'Creating account…', switchText: 'Already have an account?', switchLink: 'Log in' },
+  forgot: { title: 'Reset your password',  submit: 'Send reset link', busy: 'Sending…',          switchText: 'Remembered it?',         switchLink: 'Log in' },
+  reset:  { title: 'Choose a new password', submit: 'Set new password', busy: 'Saving…',         switchText: '',                       switchLink: 'Back to log in' },
+};
+
 function setAuthMode(mode){
   authMode = mode;
-  const signup = mode === 'signup';
-  document.getElementById('authTitle').textContent = signup ? 'Create your account' : 'Log in';
-  document.getElementById('authSubmitBtn').textContent = signup ? 'Create account' : 'Log in';
-  document.getElementById('authConfirmField').classList.toggle('hidden', !signup);
-  document.getElementById('authPassword').autocomplete = signup ? 'new-password' : 'current-password';
-  document.getElementById('authSwitchText').textContent = signup ? 'Already have an account?' : 'New here?';
-  document.getElementById('authSwitchLink').textContent = signup ? 'Log in' : 'Create an account';
+  const m = AUTH_MODES[mode];
+  const newPassword = mode === 'signup' || mode === 'reset';
+  document.getElementById('authTitle').textContent = m.title;
+  document.getElementById('authSubmitBtn').textContent = m.submit;
+  document.getElementById('authEmailField').classList.toggle('hidden', mode === 'reset');
+  document.getElementById('authPasswordField').classList.toggle('hidden', mode === 'forgot');
+  document.getElementById('authConfirmField').classList.toggle('hidden', !newPassword);
+  document.getElementById('authForgotWrap').classList.toggle('hidden', mode !== 'login');
+  document.getElementById('authPasswordLabel').textContent = mode === 'reset' ? 'New password' : 'Password';
+  document.getElementById('authPassword').autocomplete = newPassword ? 'new-password' : 'current-password';
+  document.getElementById('authSwitchText').textContent = m.switchText;
+  document.getElementById('authSwitchLink').textContent = m.switchLink;
   showAuthError('');
 }
 
+function setAuthNote(text, success){
+  const noteEl = document.getElementById('authNote');
+  noteEl.textContent = text || '';
+  noteEl.classList.toggle('success', !!success);
+  noteEl.classList.toggle('hidden', !text);
+}
+
+// The bottom link: login<->signup, and from forgot/reset back to login.
 window.toggleAuthMode = function(){
-  document.getElementById('authNote').classList.add('hidden');
+  if(authMode === 'reset') resetToken = null; // abandoning the reset, stop guarding this screen
+  setAuthNote('');
   setAuthMode(authMode === 'login' ? 'signup' : 'login');
+};
+
+window.showForgot = function(){
+  setAuthNote('');
+  setAuthMode('forgot');
 };
 
 function showAuthError(msg){
@@ -840,45 +873,73 @@ function showAuthError(msg){
 
 async function submitAuth(e){
   e.preventDefault();
+  const mode = authMode;
   const email = document.getElementById('authEmail').value.trim();
   const password = document.getElementById('authPassword').value;
   const confirm = document.getElementById('authConfirm').value;
 
-  if(!email || !password){ showAuthError('Enter your email and password.'); return; }
-  if(authMode === 'signup'){
-    // The server enforces this too, this is just a faster error message.
+  if(mode === 'forgot'){
+    if(!email){ showAuthError('Enter your email.'); return; }
+  } else if(mode === 'reset'){
     if(password.length < 8){ showAuthError('Password must be at least 8 characters.'); return; }
     if(password !== confirm){ showAuthError('Passwords do not match.'); return; }
+  } else {
+    if(!email || !password){ showAuthError('Enter your email and password.'); return; }
+    if(mode === 'signup'){
+      // The server enforces this too, this is just a faster error message.
+      if(password.length < 8){ showAuthError('Password must be at least 8 characters.'); return; }
+      if(password !== confirm){ showAuthError('Passwords do not match.'); return; }
+    }
   }
 
+  const path = { login: '/auth/login', signup: '/auth/signup', forgot: '/auth/forgot-password', reset: '/auth/reset-password' }[mode];
+  const body = mode === 'reset' ? { token: resetToken, password } : mode === 'forgot' ? { email } : { email, password };
+
   const btn = document.getElementById('authSubmitBtn');
-  const label = btn.textContent;
   btn.disabled = true;
-  btn.textContent = authMode === 'signup' ? 'Creating account…' : 'Logging in…';
+  btn.textContent = AUTH_MODES[mode].busy;
   showAuthError('');
   try{
     // Deliberately not api(): a 401 here means "wrong password", not
     // "session expired", so it must not trigger handleUnauthorized().
-    const res = await fetch(API_BASE + (authMode === 'signup' ? '/auth/signup' : '/auth/login'), {
+    const res = await fetch(API_BASE + path, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify(body),
     });
     let data = null;
     try{ data = await res.json(); }catch(_){ /* non-JSON error body */ }
+
     if(!res.ok){
-      showAuthError(data && typeof data.detail === 'string' ? data.detail : `Something went wrong (${res.status}), check your details and try again.`);
+      const detail = data && typeof data.detail === 'string' ? data.detail : '';
+      if(mode === 'reset' && res.status === 400 && detail.includes('reset link')){
+        // Dead link (expired or already used): retrying it can't work, so
+        // hand them straight to requesting a new one.
+        resetToken = null;
+        showAuthScreen('forgot', 'That reset link is invalid or has expired. Enter your email to get a new one.');
+        return;
+      }
+      showAuthError(detail || `Something went wrong (${res.status}), check your details and try again.`);
       return;
     }
+
+    if(mode === 'forgot'){
+      // Same message whether or not the email has an account, matching the server.
+      setAuthNote("If an account exists for that email, we've sent a reset link. It works once and expires in 1 hour.", true);
+      return;
+    }
+
+    if(mode === 'reset') resetToken = null;
     TOKEN = data.token;
     localStorage.setItem('consultcastai_token', TOKEN);
     hideAuthScreen();
+    setAuthNote('');
     onAuthenticated({ email: data.email, email_verified: data.email_verified, dev_bypass: false });
   }catch(err){
     showAuthError('Could not reach the server. Check your connection and try again.');
   }finally{
     btn.disabled = false;
-    btn.textContent = label;
+    btn.textContent = AUTH_MODES[authMode].submit; // current mode's label, the mode may have changed above
   }
 }
 document.getElementById('authForm').addEventListener('submit', submitAuth);
@@ -907,6 +968,7 @@ function onAuthenticated(me){
 async function checkAuth(){
   try{
     const me = await api('/auth/me'); // a 401 here already raises the login screen via api()
+    if(resetToken) return; // they opened a reset link while already logged in: stay on the reset screen
     hideAuthScreen();
     onAuthenticated(me);
   }catch(e){
@@ -921,14 +983,32 @@ window.logout = function(){
 
 // The emailed verification link redirects back here with ?verified=1 (or
 // ?verified=invalid for a bad/already-used link).
-function handleVerifiedParam(){
+function stripQueryParam(name){
   const params = new URLSearchParams(location.search);
-  const v = params.get('verified');
+  params.delete(name);
+  const qs = params.toString();
+  history.replaceState(null, '', location.pathname + (qs ? '?' + qs : ''));
+}
+
+function handleVerifiedParam(){
+  const v = new URLSearchParams(location.search).get('verified');
   if(!v) return;
   flashBanner = true;
   if(v === '1') showBanner('Email verified, thanks!', true);
   else showBanner('That verification link is invalid or was already used.');
-  history.replaceState(null, '', location.pathname);
+  stripQueryParam('verified');
+}
+
+// The emailed reset link opens the app with ?reset_token=... Pull it into
+// memory and strip it from the URL straight away, so the token doesn't sit in
+// the address bar, browser history, or a Referer header. Opens the "choose a
+// new password" screen instead of the normal login.
+function handleResetParam(){
+  const t = new URLSearchParams(location.search).get('reset_token');
+  if(!t) return;
+  resetToken = t;
+  stripQueryParam('reset_token');
+  showAuthScreen('reset', '');
 }
 
 async function loadPersonas(){
@@ -1616,6 +1696,7 @@ window.downloadAssessmentDocx = async function(){
 };
 
 handleVerifiedParam();
+handleResetParam();
 loadPersonas();
 checkAuth();
 </script>

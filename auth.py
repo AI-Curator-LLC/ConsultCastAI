@@ -1,12 +1,14 @@
 """
 Authentication: real user accounts (email + password) issuing signed JWTs.
 
-Accounts live in users.py (signup/login/verification) and prove identity
-via a stateless bearer token, so there's no server-side session table: the
-signed token itself is the proof, checked here on every request.
+Accounts live in users.py (signup/login/verification/password reset) and
+prove identity via a signed bearer token, so there's no server-side session
+table. The token is also checked against its account on every request
+(one primary-key lookup) so a password reset can revoke all existing logins.
 
 - The Authorization: Bearer <jwt> header is decoded and verified against
-  CONSULTCASTAI_JWT_SECRET (see users.decode_token).
+  CONSULTCASTAI_JWT_SECRET (see users.decode_token), then matched to the
+  live account's token_version.
 - If that secret is missing in production, auth FAILS CLOSED (500), never
   admits everyone.
 - A local-dev bypass exists for zero-setup local testing. It is DELIBERATELY
@@ -70,7 +72,16 @@ def verify_user(authorization: str | None = Header(default=None)) -> AuthUser:
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid or expired session, please log in again")
 
-    return AuthUser(rep_id=payload["sub"], email=payload["email"], is_admin=payload.get("is_admin", False))
+    # A signature-valid token still has to match the live account: this is
+    # what makes a password reset (which bumps token_version) log out every
+    # existing session, and makes a deleted account or a revoked admin flag
+    # take effect immediately instead of after the token's 30 days. Tokens
+    # issued before token_version existed carry no "tv" and count as 0.
+    account = users.get_user_by_id(payload["sub"])
+    if not account or account.token_version != payload.get("tv", 0):
+        raise HTTPException(status_code=401, detail="Invalid or expired session, please log in again")
+
+    return AuthUser(rep_id=account.id, email=account.email, is_admin=account.is_admin)
 
 
 def require_owner(session_rep_id: str, user: AuthUser) -> None:

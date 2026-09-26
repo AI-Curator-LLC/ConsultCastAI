@@ -112,10 +112,21 @@ to your own Resend account's address. For real users, verify a sending domain
 in Resend and set `CONSULTCASTAI_EMAIL_FROM`, e.g.
 `ConsultCastAI <noreply@ai-curator.ai>`.
 
-Not built yet: password reset (do this next), rate limiting on login/signup
-(add before this goes properly public), and a way to resend a verification
-email. There's also no UI to make a user an admin, `is_admin` is a column
-on `users` you'd flip directly.
+Password reset: "Forgot password?" on the login screen emails a link that
+opens the app on a "choose a new password" screen. Reset tokens are stored
+only as a hash, work once, and expire after 1 hour; requests to the same
+account are limited to one per minute; the forgot form answers identically
+whether or not the email has an account. A successful reset signs you in,
+marks the email verified (the link proves the inbox), and bumps the
+account's `token_version`, which invalidates every login token issued
+before it (each request is checked against the account, so a stolen session
+doesn't survive a password change). `users.py` adds the reset columns to an
+existing database automatically on startup, no manual migration needed.
+
+Not built yet: rate limiting on login/signup (add before this goes properly
+public, the reset cooldown is only a per-account email limit, not brute-force
+protection), and a way to resend a verification email. There's also no UI to
+make a user an admin, `is_admin` is a column on `users` you'd flip directly.
 
 ## Voice, current state
 

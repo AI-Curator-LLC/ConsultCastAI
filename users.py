@@ -19,8 +19,10 @@ The public functions are identical either way, nothing above this module
 needs to know which backend is live.
 """
 
+import hashlib
 import os
 import re
+import secrets
 import sqlite3
 import threading
 import uuid
@@ -39,6 +41,11 @@ _JWT_SECRET_ENV = "CONSULTCASTAI_JWT_SECRET"
 _JWT_TTL = timedelta(days=30)
 _DEV_JWT_SECRET = "dev-only-insecure-secret-never-used-in-production"
 
+RESET_TTL = timedelta(hours=1)
+# Minimum gap between reset emails to the same account. Not a general rate
+# limiter, just stops the forgot-password form being used to spam one inbox.
+RESET_COOLDOWN = timedelta(seconds=60)
+
 MIN_PASSWORD_LENGTH = 8
 MAX_PASSWORD_BYTES = 72  # bcrypt's hard limit; newer bcrypt raises past it instead of truncating
 
@@ -56,6 +63,12 @@ class User:
     verification_token: str | None
     is_admin: bool
     created_at: str
+    # Bumped on password reset. Tokens carry the version they were issued
+    # under, so a reset instantly invalidates every existing login (a
+    # stateless JWT would otherwise stay valid for its full 30 days).
+    token_version: int = 0
+    reset_token_hash: str | None = None
+    reset_token_expires: str | None = None  # ISO-8601 UTC
 
 
 # --- passwords -------------------------------------------------------------
@@ -119,6 +132,7 @@ def issue_token(user: User) -> str:
         "sub": user.id,
         "email": user.email,
         "is_admin": user.is_admin,
+        "tv": user.token_version,
         "exp": datetime.now(timezone.utc) + _JWT_TTL,
     }
     return jwt.encode(payload, _jwt_secret(), algorithm="HS256")
@@ -141,7 +155,10 @@ CREATE TABLE IF NOT EXISTS users (
     email_verified INTEGER NOT NULL DEFAULT 0,
     verification_token TEXT,
     is_admin INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    token_version INTEGER NOT NULL DEFAULT 0,
+    reset_token_hash TEXT,
+    reset_token_expires TEXT
 )
 """
 
@@ -153,9 +170,22 @@ CREATE TABLE IF NOT EXISTS users (
     email_verified BOOLEAN NOT NULL DEFAULT FALSE,
     verification_token TEXT,
     is_admin BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    token_version INTEGER NOT NULL DEFAULT 0,
+    reset_token_hash TEXT,
+    reset_token_expires TEXT
 )
 """
+
+# CREATE TABLE IF NOT EXISTS won't touch a table that already exists, so
+# databases created before password reset shipped (e.g. the live one) get
+# these columns added here. Existing rows take the defaults, and old JWTs
+# without a "tv" claim are treated as version 0, so nobody is logged out.
+_ADDED_COLUMNS = [
+    ("token_version", "INTEGER NOT NULL DEFAULT 0"),
+    ("reset_token_hash", "TEXT"),
+    ("reset_token_expires", "TEXT"),
+]
 
 _schema_ready = False
 _schema_lock = threading.Lock()
@@ -189,6 +219,15 @@ def _ensure_schema() -> None:
         try:
             cur = conn.cursor()
             cur.execute(_SQLITE_SCHEMA if _LOCAL else _POSTGRES_SCHEMA)
+            if _LOCAL:
+                cur.execute("PRAGMA table_info(users)")
+                existing = {row["name"] for row in cur.fetchall()}
+                for name, ddl in _ADDED_COLUMNS:
+                    if name not in existing:
+                        cur.execute(f"ALTER TABLE users ADD COLUMN {name} {ddl}")
+            else:
+                for name, ddl in _ADDED_COLUMNS:
+                    cur.execute(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS {name} {ddl}")
             conn.commit()
         finally:
             conn.close()
@@ -219,6 +258,9 @@ def _row_to_user(row) -> User | None:
         verification_token=row["verification_token"],
         is_admin=bool(row["is_admin"]),
         created_at=str(row["created_at"]),
+        token_version=int(row["token_version"] or 0),
+        reset_token_hash=row["reset_token_hash"],
+        reset_token_expires=row["reset_token_expires"],
     )
 
 
@@ -257,3 +299,70 @@ def get_user_by_verification_token(token: str) -> User | None:
 def mark_verified(user_id: str) -> None:
     # Clearing the token makes each link single-use.
     _run("UPDATE users SET email_verified = ?, verification_token = NULL WHERE id = ?", (True, user_id))
+
+
+# --- password reset --------------------------------------------------------
+
+def _hash_reset_token(token: str) -> str:
+    # Only this hash is stored, so a leaked database doesn't hand out usable
+    # reset links. The token itself is 256 bits of randomness, so a fast
+    # unsalted hash is fine here (unlike a human-chosen password).
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def _parse_utc(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def reset_recently_requested(user: User) -> bool:
+    """True if a reset was issued for this account within RESET_COOLDOWN.
+    The issue time is derived from the expiry (issued = expires - TTL), so
+    no extra column is needed."""
+    expires = _parse_utc(user.reset_token_expires)
+    if not expires:
+        return False
+    issued = expires - RESET_TTL
+    return datetime.now(timezone.utc) - issued < RESET_COOLDOWN
+
+
+def create_reset_token(user_id: str) -> str:
+    """Issues a fresh single-use reset token (replacing any earlier one) and
+    returns the raw token, which exists only in the emailed link."""
+    token = secrets.token_urlsafe(32)
+    expires = (datetime.now(timezone.utc) + RESET_TTL).isoformat()
+    _run(
+        "UPDATE users SET reset_token_hash = ?, reset_token_expires = ? WHERE id = ?",
+        (_hash_reset_token(token), expires, user_id),
+    )
+    return token
+
+
+def get_user_by_reset_token(token: str) -> User | None:
+    """The account a still-valid reset token belongs to, else None
+    (unknown, already used, or expired)."""
+    if not token:
+        return None
+    user = _row_to_user(_run("SELECT * FROM users WHERE reset_token_hash = ?", (_hash_reset_token(token),), fetch_one=True))
+    if not user:
+        return None
+    expires = _parse_utc(user.reset_token_expires)
+    if not expires or expires < datetime.now(timezone.utc):
+        return None
+    return user
+
+
+def reset_password(user_id: str, new_password_hash: str) -> None:
+    """Sets the new password, consumes the reset token, and bumps
+    token_version so every existing login token stops working. Also marks the
+    email verified: having received the reset link proves control of the inbox."""
+    _run(
+        "UPDATE users SET password_hash = ?, reset_token_hash = NULL, reset_token_expires = NULL, "
+        "token_version = token_version + 1, email_verified = ?, verification_token = NULL WHERE id = ?",
+        (new_password_hash, True, user_id),
+    )

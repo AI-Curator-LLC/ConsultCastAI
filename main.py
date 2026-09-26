@@ -30,6 +30,8 @@ import users
 from models import (
     SignupRequest,
     LoginRequest,
+    ForgotPasswordRequest,
+    ResetPasswordRequest,
     SessionRecord,
     ConversationTurn,
     StartSessionRequest,
@@ -139,6 +141,39 @@ def verify_email(token: str):
         return RedirectResponse(f"{_frontend_url()}/?verified=invalid")
     users.mark_verified(user.id)
     return RedirectResponse(f"{_frontend_url()}/?verified=1")
+
+
+@app.post("/auth/forgot-password")
+def forgot_password(req: ForgotPasswordRequest, background_tasks: BackgroundTasks):
+    """Answers identically whether or not the email has an account, so this
+    form can't be used to find out who's registered. The reset email (if any)
+    goes out after the response."""
+    generic = {"ok": True}
+    email = users.normalize_email(req.email)
+    if not users.is_valid_email(email):
+        return generic
+    user = users.get_user_by_email(email)
+    if not user or users.reset_recently_requested(user):
+        return generic
+    token = users.create_reset_token(user.id)
+    background_tasks.add_task(emailer.send_password_reset_email, user.email, token)
+    return generic
+
+
+@app.post("/auth/reset-password")
+def reset_password(req: ResetPasswordRequest):
+    user = users.get_user_by_reset_token(req.token)
+    if not user:
+        raise HTTPException(400, "This reset link is invalid or has expired")
+    problem = users.password_problem(req.password)
+    if problem:
+        raise HTTPException(400, problem)  # the token is only consumed on success, so they can retry
+
+    users.reset_password(user.id, users.hash_password(req.password))
+    fresh = users.get_user_by_id(user.id)  # re-read: token_version just changed
+    # Signed in straight away with a token under the new version, every
+    # older login for this account is now dead.
+    return {"token": _issue_or_500(fresh), "email": fresh.email, "email_verified": True}
 
 
 @app.get("/auth/me")

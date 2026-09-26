@@ -14,6 +14,15 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    password: str
+
+
 class ConversationTurn(BaseModel):
     role: str  # "user" (consultant) | "assistant" (persona)
     content: str

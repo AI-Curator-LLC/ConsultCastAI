@@ -1,18 +1,19 @@
 """
 Transactional email via Resend's REST API (one HTTP call, no SDK).
 
-Email verification is a SOFT requirement: a failure here must never block
-signup, so send_verification_email() swallows and logs every error rather
-than raising. The user already has a working session token from
-/auth/signup regardless of whether this email ever arrives.
+Every function here is best-effort: a failure is logged and swallowed, never
+raised, so a broken email provider can't block signup or leak (through a
+different response) whether an account exists on the forgot-password form.
 
 Env vars:
 - RESEND_API_KEY: unset means "log instead of send" (local dev), never an error.
 - CONSULTCASTAI_EMAIL_FROM: defaults to Resend's shared test sender, which only
   delivers to your own Resend account's email. Switch to a verified domain
   (e.g. "ConsultCastAI <noreply@ai-curator.ai>") once it's verified in Resend.
-- CONSULTCASTAI_BACKEND_URL: public base URL of this API, used to build the
-  verification link.
+- CONSULTCASTAI_BACKEND_URL: public base URL of this API (verification links
+  hit it directly).
+- CONSULTCASTAI_FRONTEND_URL: public base URL of the web app (password reset
+  links open it, since setting a new password needs a form).
 """
 
 import json
@@ -28,27 +29,26 @@ def backend_url() -> str:
     return os.environ.get("CONSULTCASTAI_BACKEND_URL", "http://localhost:8081").rstrip("/")
 
 
-def send_verification_email(to_email: str, token: str) -> None:
-    verify_url = f"{backend_url()}/auth/verify?token={token}"
+def frontend_url() -> str:
+    return os.environ.get("CONSULTCASTAI_FRONTEND_URL", "http://localhost:5500").rstrip("/")
+
+
+def _send(to_email: str, subject: str, html: str, dev_log_link: str, what: str) -> None:
     api_key = os.environ.get("RESEND_API_KEY", "").strip()
 
     if not api_key:
         if os.environ.get("CONSULTCASTAI_ENV") == "production":
-            print("[consultcastai] RESEND_API_KEY is not set, skipping verification email")
+            print(f"[consultcastai] RESEND_API_KEY is not set, skipping {what} email")
         else:
             # Local dev convenience only. Never log a live token in production.
-            print(f"[consultcastai] RESEND_API_KEY not set, verification link for {to_email}: {verify_url}")
+            print(f"[consultcastai] RESEND_API_KEY not set, {what} link for {to_email}: {dev_log_link}")
         return
 
     body = json.dumps({
         "from": os.environ.get("CONSULTCASTAI_EMAIL_FROM", _DEFAULT_FROM),
         "to": [to_email],
-        "subject": "Verify your ConsultCastAI account",
-        "html": (
-            "<p>Welcome to ConsultCastAI.</p>"
-            f'<p>Click to verify your email: <a href="{verify_url}">{verify_url}</a></p>'
-            "<p>If you didn't create this account, you can ignore this email.</p>"
-        ),
+        "subject": subject,
+        "html": html,
     }).encode("utf-8")
     request = urllib.request.Request(
         _RESEND_URL,
@@ -70,6 +70,33 @@ def send_verification_email(to_email: str, token: str) -> None:
             detail = exc.read().decode("utf-8", "replace")
         except Exception:
             pass
-        print(f"[consultcastai] verification email failed for {to_email}: HTTP {exc.code} {detail}")
+        print(f"[consultcastai] {what} email failed for {to_email}: HTTP {exc.code} {detail}")
     except Exception as exc:
-        print(f"[consultcastai] verification email failed for {to_email}: {type(exc).__name__}: {exc}")
+        print(f"[consultcastai] {what} email failed for {to_email}: {type(exc).__name__}: {exc}")
+
+
+def send_verification_email(to_email: str, token: str) -> None:
+    verify_url = f"{backend_url()}/auth/verify?token={token}"
+    _send(
+        to_email,
+        "Verify your ConsultCastAI account",
+        "<p>Welcome to ConsultCastAI.</p>"
+        f'<p>Click to verify your email: <a href="{verify_url}">{verify_url}</a></p>'
+        "<p>If you didn't create this account, you can ignore this email.</p>",
+        dev_log_link=verify_url,
+        what="verification",
+    )
+
+
+def send_password_reset_email(to_email: str, token: str) -> None:
+    reset_url = f"{frontend_url()}/?reset_token={token}"
+    _send(
+        to_email,
+        "Reset your ConsultCastAI password",
+        "<p>We got a request to reset the password on your ConsultCastAI account.</p>"
+        f'<p>Click to choose a new one: <a href="{reset_url}">{reset_url}</a></p>'
+        "<p>This link works once and expires in 1 hour. If you didn't ask for this, "
+        "you can ignore this email, your password won't change.</p>",
+        dev_log_link=reset_url,
+        what="password reset",
+    )
