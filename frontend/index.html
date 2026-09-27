@@ -506,7 +506,10 @@
        verification link (?verified=1 / ?verified=invalid). Never gates access. -->
   <div class="verify-banner hidden" id="verifyBanner">
     <span id="verifyBannerText"></span>
-    <button class="adv-toggle" onclick="dismissBanner()">dismiss</button>
+    <span style="display:flex; align-items:center; gap:10px; flex:none;">
+      <button class="adv-toggle hidden" id="resendVerifyBtn" onclick="resendVerification()">resend email</button>
+      <button class="adv-toggle" onclick="dismissBanner()">dismiss</button>
+    </span>
   </div>
 
   <div class="session-grid">
@@ -1139,6 +1142,26 @@ window.dismissBanner = function(){
   document.getElementById('verifyBanner').classList.add('hidden');
 };
 
+// Re-sends the same verification link (see main.py's /auth/resend-verification).
+// Only ever shown pre-verification, see onAuthenticated below — once an
+// account is verified this banner (and button) never comes back.
+window.resendVerification = async function(){
+  const btn = document.getElementById('resendVerifyBtn');
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'sending…';
+  try{
+    await api('/auth/resend-verification', { method: 'POST' });
+    btn.textContent = 'sent!';
+  }catch(e){
+    btn.textContent = original;
+    btn.disabled = false;
+    alert('Could not resend the verification email: ' + e.message);
+    return;
+  }
+  setTimeout(() => { btn.textContent = original; btn.disabled = false; }, 5000);
+};
+
 function onAuthenticated(me){
   const avatarEl = document.getElementById('profileAvatar');
   avatarEl.textContent = (me.email || '?').charAt(0).toUpperCase();
@@ -1147,6 +1170,7 @@ function onAuthenticated(me){
   // Nothing to log out of in dev bypass (no real session), so no menu either.
   document.getElementById('profileWrap').classList.toggle('hidden', !!me.dev_bypass || !TOKEN);
   if(flashBanner) return;
+  document.getElementById('resendVerifyBtn').classList.toggle('hidden', !!me.email_verified || !!me.dev_bypass);
   if(me.email_verified) window.dismissBanner();
   else showBanner('Verify your email: check your inbox for the link we sent. Nothing is locked in the meantime.');
 }

@@ -171,6 +171,26 @@ def reset_password(req: ResetPasswordRequest):
     return {"token": _issue_or_500(fresh), "email": fresh.email, "email_verified": True}
 
 
+@app.post("/auth/resend-verification")
+def resend_verification(background_tasks: BackgroundTasks, user: auth.AuthUser = Depends(auth.verify_user)):
+    """Re-sends the same verification link, for when the original never
+    arrived (see emailer.py's docstring on Resend's shared sender). Reuses
+    the token issued at signup rather than minting a new one — it's still
+    valid until the account is verified, and a stale link floating around
+    from an earlier resend attempt should keep working too, not silently
+    stop. Answers the same way whether or not the email actually went out;
+    the frontend only shows this button pre-verification, so there's no
+    dev_bypass or already-verified case for it to handle gracefully."""
+    account = users.get_user_by_id(user.rep_id)
+    if not account or account.email_verified:
+        return {"ok": True}
+    if not account.verification_token:
+        # Shouldn't happen (only cleared by mark_verified), but don't 500 on it.
+        return {"ok": True}
+    background_tasks.add_task(emailer.send_verification_email, account.email, account.verification_token)
+    return {"ok": True}
+
+
 @app.get("/auth/me")
 def me(user: auth.AuthUser = Depends(auth.verify_user)):
     """Lets the frontend ask "am I logged in?" on load. In local dev-bypass
