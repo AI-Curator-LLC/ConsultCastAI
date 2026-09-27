@@ -263,7 +263,12 @@
      opacity. No canvas processing, no face tracking, just two video
      elements — same trick real soft-focus camera filters use. DOM order
      (declared after selfViewVideo) puts it on top with no z-index needed. */
+  /* Disabled for now (all filters off) — the JS still starts/stops this
+     layer alongside the sharp one, this just keeps it from ever being seen.
+     Re-enable by removing display:none here; the tuned values are kept as
+     the last-known settings, not deleted. */
   #selfViewVideoSmooth{
+    display:none !important;
     filter:blur(1.5px) saturate(1.05) brightness(1.03);
     opacity:0.3;
     pointer-events:none;
