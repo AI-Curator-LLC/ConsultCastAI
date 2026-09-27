@@ -86,26 +86,3 @@ def get_debrief(debrief_prompt: str) -> str:
         [{"role": "user", "content": debrief_prompt}],
         max_tokens=600,
     )
-
-
-
-
-def get_assessment(assessment_prompt: str) -> str:
-    """A real, client-facing deliverable, not a coaching artifact. Higher
-    token budget than the debrief since it's a longer structured document,
-    and a system prompt that emphasizes it's a genuine work product, not an
-    exercise, no meta commentary, no hedging.
-
-    max_tokens=2000: 900 was measured too low in practice and produced
-    assessments that cut off mid-sentence partway through SUGGESTED NEXT
-    STEPS, the last required section, unacceptable for something meant to
-    be copied and sent to a real client as-is. Bumped again on top of the
-    first fix to leave headroom for the added BROADER AI LANDSCAPE section
-    (5-7 more bullet points) now that the structure is 6 sections, not 5."""
-    return _call(
-        "You are a senior AI consultant producing a real, sendable deliverable "
-        "for an actual client. Follow the requested structure exactly. No "
-        "meta commentary about being AI-generated, no placeholders.",
-        [{"role": "user", "content": assessment_prompt}],
-        max_tokens=2000,
-    )

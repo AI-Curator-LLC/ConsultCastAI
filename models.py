@@ -79,19 +79,3 @@ class AvatarTokenRequest(BaseModel):
 
 class AvatarTokenResponse(BaseModel):
     session_token: str
-
-
-class AssessmentRequest(BaseModel):
-    session_id: str | None = None       # pull context from a completed practice session
-    manual_context: str | None = None   # real client notes typed directly, either or both
-    client_name: str | None = None
-    industry: str | None = None         # matched (lowercased) against prompts.REFERENCE_TOOLS
-
-
-class AssessmentResponse(BaseModel):
-    assessment: str
-
-
-class AssessmentDocxRequest(BaseModel):
-    assessment_text: str          # already-generated text the browser has, not re-sent to Claude
-    client_name: str | None = None

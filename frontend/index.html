@@ -237,12 +237,6 @@
   input:disabled, .btn:disabled{opacity:0.5;}
   .loading-note{display:flex; align-items:center; gap:9px; color:var(--text-dim); font-size:13.5px; font-style:italic;}
 
-  .clientbriefai-note{
-    font-size:12px; color:var(--text-dim); background:var(--bg-panel-2);
-    border:1px solid var(--border); border-radius:10px; padding:10px 13px; margin-bottom:16px;
-  }
-  .clientbriefai-note a{color:var(--blue-glow); font-weight:600; text-decoration:none;}
-  .clientbriefai-note a:hover{text-decoration:underline;}
 
   .controls-row{display:flex; gap:10px; margin-bottom:10px; align-items:flex-end;}
   .controls-row .field{margin-bottom:0; flex:0 0 150px;}
@@ -391,7 +385,6 @@
     </div>
     <div class="conn">
       <span class="badge" id="statusBadge">connecting</span>
-      <button class="header-pill" onclick="openAssessment(null)">new AI assessment</button>
       <div class="adv-panel" id="advPanel">
         <input id="apiBase" placeholder="API base URL" value="http://localhost:8081" />
         <button class="btn-sm" onclick="saveConfig()">Reconnect</button>
@@ -539,44 +532,6 @@
       <div class="debrief-body" id="debriefText"></div>
       <div class="end-row" style="display:flex; gap:10px; flex-wrap:wrap;">
         <button class="btn" onclick="resetAll()">Practice another scenario</button>
-        <button class="btn ghost" onclick="openAssessment(true)">Generate client-ready AI Assessment</button>
-      </div>
-    </div>
-  </section>
-
-  <!-- ASSESSMENT: real client deliverable, from a practice session, manual notes, or both -->
-  <section id="assessmentScreen" class="hidden" style="margin-top:20px;">
-    <div class="panel">
-      <p class="eyebrow">Client deliverable</p>
-      <h2>AI Opportunity Assessment</h2>
-      <p style="font-size:12.5px; color:var(--text-dim); margin:-8px 0 16px;" id="assessmentSourceNote"></p>
-      <p class="clientbriefai-note">
-        Working from an actual recording or a full set of client notes, not just a quick summary?
-        <a href="#" target="_blank" rel="noopener" id="clientBriefAiLink">ClientBriefAI</a> is built for that.
-      </p>
-
-      <div class="field">
-        <span class="field-label">Client / business name (optional)</span>
-        <input id="assessmentClientName" placeholder="e.g. Diaz Family Kitchen" style="width:100%; background:var(--bg-panel-2); border:1px solid var(--border); color:var(--text); padding:11px 13px; border-radius:10px; font-size:13.5px;" />
-      </div>
-      <div class="field">
-        <span class="field-label">Industry (optional — only used to suggest specific, vetted tool names)</span>
-        <input id="assessmentIndustry" placeholder="e.g. restaurant" style="width:100%; background:var(--bg-panel-2); border:1px solid var(--border); color:var(--text); padding:11px 13px; border-radius:10px; font-size:13.5px;" />
-      </div>
-      <div class="field">
-        <span class="field-label">Real client context (optional — add anything not covered above, or use this alone with no session)</span>
-        <textarea id="assessmentContext" rows="5" placeholder="Notes from a real conversation, their actual numbers, specific pain points, anything relevant..." style="width:100%; background:var(--bg-panel-2); border:1px solid var(--border); color:var(--text); padding:11px 13px; border-radius:10px; font-size:13.5px; font-family:inherit; resize:vertical;"></textarea>
-      </div>
-
-      <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:16px;">
-        <button class="btn" id="assessmentGenerateBtn" onclick="generateAssessment()">Generate assessment</button>
-        <button class="btn ghost" onclick="closeAssessment()">Close</button>
-      </div>
-
-      <div class="debrief-body hidden" id="assessmentResult"></div>
-      <div class="end-row hidden" id="assessmentActions" style="display:flex; gap:10px; flex-wrap:wrap;">
-        <button class="btn ghost" id="assessmentReadBtn" onclick="toggleReadAloud()">Read aloud</button>
-        <button class="btn ghost" onclick="downloadAssessmentDocx()">Download as Word doc</button>
       </div>
     </div>
   </section>
@@ -625,12 +580,6 @@
 
 <script type="module">
 import { createClient, AnamEvent } from "https://cdn.jsdelivr.net/npm/@anam-ai/js-sdk@4/+esm";
-
-// ClientBriefAI is live at its own subdomain. This is the ONLY place that
-// needs to change if that ever moves — every mention of ClientBriefAI in
-// the app reads from here rather than hardcoding the URL in multiple spots.
-const CLIENTBRIEFAI_URL = "https://clientbriefai.ai-curator.ai";
-document.getElementById('clientBriefAiLink').href = CLIENTBRIEFAI_URL;
 
 // Falls back to the deployed Render backend's default URL (from the
 // service name in render.yaml) whenever this isn't running on localhost,
@@ -1584,8 +1533,6 @@ window.resetAll = function(){
   stopTimer();
   resetTimerDisplay();
   document.getElementById('debriefScreen').classList.add('hidden');
-  document.getElementById('assessmentScreen').classList.add('hidden');
-  stopReadAloud();
   document.getElementById('personaSelect').disabled = false;
   document.getElementById('personaSelect').value = '';
   document.getElementById('callDirectionSelect').disabled = false;
@@ -1605,144 +1552,6 @@ window.resetAll = function(){
   setMicBusy(false); // safety: never leave the mic stuck disabled between sessions
   setComposerEnabled(false); // called after setMicBusy so this wins: no session, composer off
   updateStartBtn();
-};
-
-// --- AI Assessment: a real client deliverable, not a coaching artifact ---
-// Two entry points share this one flow: from a just-ended session's debrief
-// (assessmentSourceSessionId set), or standalone from the header (null,
-// manual notes only). Either way, /assessment accepts session_id and/or
-// manual_context, so this same generate function covers both.
-//
-// The debrief button passes literal `true` rather than `sessionId` directly:
-// inline onclick="..." attributes run in the page's global scope, not inside
-// this <script type="module">, so a bare reference to the module-scoped
-// `sessionId` variable there would throw ReferenceError. `true` is a safe
-// token to write inline; it just means "use whatever session is current".
-let assessmentSourceSessionId = null;
-
-window.openAssessment = function(fromSessionId){
-  assessmentSourceSessionId = fromSessionId === true ? sessionId : (fromSessionId || null);
-  document.getElementById('assessmentSourceNote').textContent = assessmentSourceSessionId
-    ? "Pulling context from the practice session you just finished. Add anything real below, or leave it blank."
-    : "No practice session attached — this generates purely from whatever real client context you add below.";
-  document.getElementById('assessmentContext').value = '';
-  document.getElementById('assessmentClientName').value = currentPersona ? currentPersona.name : '';
-  // Auto-fill from the attached session's persona — this is the whole fix:
-  // leaving it blank was silently telling the backend "no vetted tools for
-  // this industry," which is exactly why assessments came back generic.
-  document.getElementById('assessmentIndustry').value = (assessmentSourceSessionId && currentPersona) ? (currentPersona.industry || '') : '';
-  document.getElementById('assessmentResult').classList.add('hidden');
-  document.getElementById('assessmentResult').textContent = '';
-  document.getElementById('assessmentActions').classList.add('hidden');
-  document.getElementById('assessmentScreen').classList.remove('hidden');
-  document.getElementById('assessmentScreen').scrollIntoView({ behavior: 'smooth' });
-};
-
-window.closeAssessment = function(){
-  stopReadAloud();
-  document.getElementById('assessmentScreen').classList.add('hidden');
-};
-
-window.generateAssessment = async function(){
-  const btn = document.getElementById('assessmentGenerateBtn');
-  const manualContext = document.getElementById('assessmentContext').value.trim();
-  const clientName = document.getElementById('assessmentClientName').value.trim();
-  const industry = document.getElementById('assessmentIndustry').value.trim();
-
-  if(!assessmentSourceSessionId && !manualContext){
-    alert('Add some real client context, or generate this from a finished practice session instead.');
-    return;
-  }
-
-  btn.disabled = true;
-  btn.textContent = 'Generating…';
-  stopReadAloud(); // a fresh result shouldn't leave a stale reading in progress
-
-  const result = document.getElementById('assessmentResult');
-  result.classList.remove('hidden');
-  result.innerHTML = '<span class="loading-note"><span class="typing-dots"><span></span><span></span><span></span></span> Generating your assessment, this is a longer document so it can take up to a minute…</span>';
-  document.getElementById('assessmentActions').classList.add('hidden');
-
-  try{
-    const res = await api('/assessment', {
-      method: 'POST',
-      body: JSON.stringify({
-        session_id: assessmentSourceSessionId,
-        manual_context: manualContext || null,
-        client_name: clientName || null,
-        industry: industry || null,
-      }),
-    });
-    result.textContent = res.assessment;
-    document.getElementById('assessmentActions').classList.remove('hidden');
-  }catch(e){
-    result.classList.add('hidden');
-    alert('Could not generate the assessment: ' + e.message);
-  }finally{
-    btn.disabled = false;
-    btn.textContent = 'Generate assessment';
-  }
-};
-
-// --- Read aloud: a plain, professional voice, not tied to any persona ---
-let readAloudActive = false;
-
-function stopReadAloud(){
-  if('speechSynthesis' in window) window.speechSynthesis.cancel();
-  readAloudActive = false;
-  const btn = document.getElementById('assessmentReadBtn');
-  if(btn) btn.textContent = 'Read aloud';
-}
-
-window.toggleReadAloud = function(){
-  if(readAloudActive){ stopReadAloud(); return; }
-  const text = document.getElementById('assessmentResult').textContent.trim();
-  if(!text || !('speechSynthesis' in window)) return;
-
-  window.speechSynthesis.cancel();
-  const utter = new SpeechSynthesisUtterance(text);
-  const voice = availableVoices.find(v => v.name === EDGE_DEFAULT_BY_GENDER.female) || findFallbackVoice('female');
-  if(voice) utter.voice = voice;
-  utter.rate = 1.0;
-  utter.onend = stopReadAloud;
-  utter.onerror = stopReadAloud;
-  window.speechSynthesis.speak(utter);
-
-  readAloudActive = true;
-  document.getElementById('assessmentReadBtn').textContent = 'Stop reading';
-};
-
-// --- Download as Word doc: formats the already-generated text, no re-call to Claude ---
-window.downloadAssessmentDocx = async function(){
-  const text = document.getElementById('assessmentResult').textContent.trim();
-  if(!text) return;
-  const clientName = document.getElementById('assessmentClientName').value.trim();
-
-  try{
-    const headers = { 'Content-Type': 'application/json' };
-    if(TOKEN) headers['Authorization'] = 'Bearer ' + TOKEN;
-    const res = await fetch(API_BASE + '/assessment/docx', {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ assessment_text: text, client_name: clientName || null }),
-    });
-    if(!res.ok){
-      const body = await res.text().catch(()=> '');
-      if(res.status === 401) handleUnauthorized();
-      throw new Error(`${res.status}: ${body}`);
-    }
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = (clientName ? clientName.replace(/[^A-Za-z0-9_-]+/g, '_') : 'AI_Assessment') + '_AI_Assessment.docx';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-  }catch(e){
-    alert('Could not download the Word document: ' + e.message);
-  }
 };
 
 handleVerifiedParam();

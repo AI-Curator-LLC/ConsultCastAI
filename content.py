@@ -28,10 +28,6 @@ class Persona:
     avatar_id: str = ""
     voice_id: str = ""
     avatar_model: str = ""
-    # Matched (lowercased) against prompts.REFERENCE_TOOLS to auto-fill the
-    # Industry field when generating an AI Assessment from this persona's
-    # session, so the assessment can name specific vetted tools instead of
-    # describing capabilities only. Keep in sync with REFERENCE_TOOLS' keys.
     industry: str = ""
 
 
