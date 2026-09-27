@@ -30,8 +30,10 @@ class Persona:
     avatar_model: str = ""
     industry: str = ""
     # Short chips shown in the UI beside the `traits` paragraph. Display-only:
-    # the paragraph is what feeds the system prompt, these are never sent to Claude.
-    trait_tags: list[str] = field(default_factory=list)
+    # the paragraph is what feeds the system prompt, these are never sent to
+    # Claude. Each item: {"label": str, "icon": str (an emoji), "color": str
+    # (hex, used only for the chip's small icon-circle background)}.
+    trait_tags: list[dict] = field(default_factory=list)
     # Static label shown in the persona card ("Easy" / "Medium" / "Hard").
     # Display-only, hand-set from how hard each persona's personality is to
     # work with; nothing computes it and it never reaches the prompts.
@@ -94,7 +96,13 @@ PERSONAS: dict[str, Persona] = {
         avatar_model="cara-4",
         industry="restaurant",
         difficulty="Medium",
-        trait_tags=["Warm but guarded", "Talks fast", "Interrupts", "Ops-focused", "Respects hands-on experience"],
+        trait_tags=[
+            {"label": 'Warm but guarded', "icon": '🛡️', "color": '#5b7fff'},
+            {"label": 'Talks fast', "icon": '💨', "color": '#9b5cff'},
+            {"label": 'Interrupts', "icon": '⚡', "color": '#ffb84d'},
+            {"label": 'Ops-focused', "icon": '⚙️', "color": '#4de8ff'},
+            {"label": 'Respects hands-on experience', "icon": '🤝', "color": '#ff5d7a'},
+        ],
     ),
     "harold_bennett": Persona(
         id="harold_bennett",
@@ -113,7 +121,13 @@ PERSONAS: dict[str, Persona] = {
         ),
         industry="legal",
         difficulty="Hard",
-        trait_tags=["Precise", "A little condescending", "Cross-examines", "Liability-focused", "Unhurried"],
+        trait_tags=[
+            {"label": 'Precise', "icon": '🎯', "color": '#5b7fff'},
+            {"label": 'A little condescending', "icon": '🧐', "color": '#9b5cff'},
+            {"label": 'Cross-examines', "icon": '🔍', "color": '#4de8ff'},
+            {"label": 'Liability-focused', "icon": '⚖️', "color": '#ff5d7a'},
+            {"label": 'Unhurried', "icon": '🕰️', "color": '#ffb84d'},
+        ],
     ),
     "priya_nair": Persona(
         id="priya_nair",
@@ -132,7 +146,13 @@ PERSONAS: dict[str, Persona] = {
         ),
         industry="ecommerce",
         difficulty="Medium",
-        trait_tags=["Sharp", "Direct", "Tech-curious", "Impatient with fluff", "Data-driven"],
+        trait_tags=[
+            {"label": 'Sharp', "icon": '💡', "color": '#ffb84d'},
+            {"label": 'Direct', "icon": '➡️', "color": '#5b7fff'},
+            {"label": 'Tech-curious', "icon": '🔬', "color": '#9b5cff'},
+            {"label": 'Impatient with fluff', "icon": '⏱️', "color": '#ff5d7a'},
+            {"label": 'Data-driven', "icon": '📊', "color": '#4de8ff'},
+        ],
     ),
     "dr_owens": Persona(
         id="dr_owens",
@@ -153,7 +173,13 @@ PERSONAS: dict[str, Persona] = {
         ),
         industry="dental",
         difficulty="Hard",
-        trait_tags=["Careful", "Procedural", "Protective of staff", "Risk-averse", "Wants it in writing"],
+        trait_tags=[
+            {"label": 'Careful', "icon": '⚠️', "color": '#ffb84d'},
+            {"label": 'Procedural', "icon": '📋', "color": '#9b5cff'},
+            {"label": 'Protective of staff', "icon": '🛡️', "color": '#ff5d7a'},
+            {"label": 'Risk-averse', "icon": '🚫', "color": '#5b7fff'},
+            {"label": 'Wants it in writing', "icon": '✍️', "color": '#4de8ff'},
+        ],
     ),
     "tom_walsh": Persona(
         id="tom_walsh",
@@ -173,7 +199,13 @@ PERSONAS: dict[str, Persona] = {
         ),
         industry="roofing",
         difficulty="Easy",
-        trait_tags=["Plainspoken", "Friendly", "Time-pressed", "Distrusts complexity", "ROI-focused"],
+        trait_tags=[
+            {"label": 'Plainspoken', "icon": '🗣️', "color": '#5b7fff'},
+            {"label": 'Friendly', "icon": '😊', "color": '#ffb84d'},
+            {"label": 'Time-pressed', "icon": '⏰', "color": '#ff5d7a'},
+            {"label": 'Distrusts complexity', "icon": '🧩', "color": '#9b5cff'},
+            {"label": 'ROI-focused', "icon": '💰', "color": '#4de8ff'},
+        ],
     ),
     "monica_reyes": Persona(
         id="monica_reyes",
@@ -192,7 +224,13 @@ PERSONAS: dict[str, Persona] = {
         ),
         industry="wealth_management",
         difficulty="Medium",
-        trait_tags=["Composed", "Formal", "Compliance-minded", "Measured", "Fiduciary-focused"],
+        trait_tags=[
+            {"label": 'Composed', "icon": '🧘', "color": '#5b7fff'},
+            {"label": 'Formal', "icon": '👔', "color": '#9b5cff'},
+            {"label": 'Compliance-minded', "icon": '📜', "color": '#4de8ff'},
+            {"label": 'Measured', "icon": '⚖️', "color": '#ffb84d'},
+            {"label": 'Fiduciary-focused', "icon": '🏦', "color": '#ff5d7a'},
+        ],
     ),
 }
 
