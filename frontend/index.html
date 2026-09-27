@@ -50,34 +50,47 @@
   .brand-text .ai{background:linear-gradient(135deg, var(--blue-glow), var(--purple-glow)); -webkit-background-clip:text; background-clip:text; color:transparent;}
 
   .conn{display:flex; align-items:center; gap:10px;}
-  /* Connection status pill. Neutral while connecting / not connected (JS
-     leaves off .ok), green once connected (JS adds .ok). */
+  /* Connection status pill: outlined, dark fill. Neutral while connecting /
+     not connected (JS leaves off .ok), green once connected (JS adds .ok). */
   .badge{
-    display:inline-flex; align-items:center; gap:6px; padding:6px 14px; border-radius:999px;
-    background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.12); color:var(--text-dim);
-    font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; white-space:nowrap;
+    display:inline-flex; align-items:center; gap:8px; padding:7px 14px; border-radius:10px;
+    background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.14); color:var(--text-dim);
+    font-size:13px; font-weight:600; white-space:nowrap;
   }
-  .badge::before{content:''; width:6px; height:6px; border-radius:50%; background:var(--text-faint);}
-  .badge.ok{background:rgba(51,230,165,0.12); border-color:rgba(51,230,165,0.3); color:var(--good);}
-  .badge.ok::before{background:var(--good); box-shadow:0 0 6px var(--good);}
-  /* Header action buttons: solid rounded pills instead of underlined links. */
+  .badge::before{content:''; width:7px; height:7px; border-radius:50%; background:var(--text-faint);}
+  .badge.ok{background:rgba(51,230,165,0.06); border-color:rgba(51,230,165,0.4); color:var(--good);}
+  .badge.ok::before{background:var(--good); box-shadow:0 0 8px var(--good);}
+  /* Header action buttons: the brand blue-to-purple gradient, dark label. */
   .header-pill{
-    display:inline-flex; align-items:center; gap:6px; padding:8px 16px; border-radius:999px;
-    font-family:inherit; font-size:13px; font-weight:600; cursor:pointer; border:none;
+    display:inline-flex; align-items:center; gap:6px; padding:9px 16px; border-radius:10px;
+    font-family:inherit; font-size:13px; font-weight:700; cursor:pointer; border:none;
     text-decoration:none; white-space:nowrap;
-  }
-  .header-pill.secondary{background:rgba(255,255,255,0.06); color:var(--text);}
-  .header-pill.secondary:hover{background:rgba(255,255,255,0.1);}
-  /* Log out gets a subtle red tint: a more consequential action than the others. */
-  .header-pill.secondary.logout{background:rgba(255,79,109,0.1); color:#ff8ea1;}
-  .header-pill.secondary.logout:hover{background:rgba(255,79,109,0.18);}
-  /* Signed-in user: circle with their first initial; full email is the tooltip. */
-  .profile-avatar{
-    width:32px; height:32px; border-radius:50%; flex:none;
     background:linear-gradient(135deg, var(--blue), var(--purple)); color:#050611;
-    display:flex; align-items:center; justify-content:center; font-weight:700; font-size:14px;
-    cursor:default; /* not clickable: there's no menu behind it, so no pointer cursor */
+    transition:filter .15s;
   }
+  .header-pill:hover{filter:brightness(1.12);}
+  /* Signed-in user: circle with their first initial. Click opens a menu with
+     the full email and Log out. */
+  .profile-wrap{position:relative; margin-left:6px;}
+  .profile-avatar{
+    width:34px; height:34px; border-radius:50%; flex:none; padding:0; border:none;
+    background:linear-gradient(135deg, var(--blue), var(--purple)); color:#050611;
+    display:flex; align-items:center; justify-content:center; font-family:inherit; font-weight:700; font-size:14px;
+    cursor:pointer;
+  }
+  .profile-avatar:hover{filter:brightness(1.12);}
+  .profile-menu{
+    display:none; position:absolute; right:0; top:calc(100% + 8px); z-index:50; min-width:200px;
+    background:var(--bg-panel-2); border:1px solid var(--border); border-radius:12px;
+    box-shadow:0 12px 32px rgba(0,0,0,0.5); padding:6px;
+  }
+  .profile-menu.open{display:block;}
+  .profile-menu .who{padding:8px 10px 10px; font-size:12px; color:var(--text-dim); word-break:break-all; border-bottom:1px solid var(--border); margin-bottom:6px;}
+  .profile-menu button{
+    width:100%; text-align:left; background:none; border:none; cursor:pointer; font-family:inherit;
+    font-size:13px; font-weight:600; color:#ff8ea1; padding:8px 10px; border-radius:8px;
+  }
+  .profile-menu button:hover{background:rgba(255,79,109,0.12);}
   .adv-toggle{
     font-family:var(--font-mono); font-size:10.5px; color:var(--text-faint); background:none; border:none;
     cursor:pointer; letter-spacing:0.5px; text-decoration:underline; text-underline-offset:3px;
@@ -378,13 +391,17 @@
     </div>
     <div class="conn">
       <span class="badge" id="statusBadge">connecting</span>
-      <button class="header-pill secondary" onclick="openAssessment(null)">new AI assessment</button>
-      <button class="header-pill secondary" onclick="toggleAdv()">connection settings</button>
-      <div class="profile-avatar hidden" id="profileAvatar"></div>
-      <button class="header-pill secondary logout hidden" id="logoutBtn" onclick="logout()">log out</button>
+      <button class="header-pill" onclick="openAssessment(null)">new AI assessment</button>
       <div class="adv-panel" id="advPanel">
         <input id="apiBase" placeholder="API base URL" value="http://localhost:8081" />
         <button class="btn-sm" onclick="saveConfig()">Reconnect</button>
+      </div>
+      <div class="profile-wrap hidden" id="profileWrap">
+        <button class="profile-avatar" id="profileAvatar" aria-haspopup="menu" aria-expanded="false" onclick="toggleProfileMenu(event)"></button>
+        <div class="profile-menu" id="profileMenu" role="menu">
+          <div class="who" id="profileEmail"></div>
+          <button id="logoutBtn" role="menuitem" onclick="logout()">Log out</button>
+        </div>
       </div>
     </div>
   </header>
@@ -786,6 +803,17 @@ function speak(text){
 }
 
 // --- Connection ---
+function closeProfileMenu(){
+  document.getElementById('profileMenu').classList.remove('open');
+  document.getElementById('profileAvatar').setAttribute('aria-expanded','false');
+}
+window.toggleProfileMenu = function(e){
+  e.stopPropagation();
+  const open = document.getElementById('profileMenu').classList.toggle('open');
+  document.getElementById('profileAvatar').setAttribute('aria-expanded', String(open));
+};
+document.addEventListener('click', closeProfileMenu);
+document.addEventListener('keydown', e => { if(e.key === 'Escape') closeProfileMenu(); });
 window.toggleAdv = function(){ document.getElementById('advPanel').classList.toggle('open'); };
 
 window.saveConfig = function(){
@@ -822,8 +850,8 @@ function clearToken(){
 function handleUnauthorized(){
   const hadToken = !!TOKEN;
   clearToken();
-  document.getElementById('logoutBtn').classList.add('hidden');
-  document.getElementById('profileAvatar').classList.add('hidden');
+  closeProfileMenu();
+  document.getElementById('profileWrap').classList.add('hidden');
   if(resetToken) return; // mid password-reset: keep that screen up, don't swap it for the login form
   showAuthScreen('login', hadToken ? 'Your session expired, please log in again.' : '');
 }
@@ -979,8 +1007,9 @@ function onAuthenticated(me){
   const avatarEl = document.getElementById('profileAvatar');
   avatarEl.textContent = (me.email || '?').charAt(0).toUpperCase();
   avatarEl.title = me.email || '';
-  avatarEl.classList.toggle('hidden', !!me.dev_bypass);
-  document.getElementById('logoutBtn').classList.toggle('hidden', !TOKEN);
+  document.getElementById('profileEmail').textContent = me.email || '';
+  // Nothing to log out of in dev bypass (no real session), so no menu either.
+  document.getElementById('profileWrap').classList.toggle('hidden', !!me.dev_bypass || !TOKEN);
   if(flashBanner) return;
   if(me.email_verified) window.dismissBanner();
   else showBanner('Verify your email: check your inbox for the link we sent. Nothing is locked in the meantime.');
