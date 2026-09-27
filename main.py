@@ -195,6 +195,7 @@ def list_personas():
             "role": p.role,
             "context": p.context,
             "traits": p.traits,
+            "trait_tags": p.trait_tags,
             "has_avatar": bool(p.avatar_id and p.voice_id),
             "industry": p.industry,
             "scenarios": [

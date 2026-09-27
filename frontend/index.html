@@ -272,6 +272,36 @@
   .gauge-fill.specificity{background:linear-gradient(90deg, var(--text-faint), var(--purple), var(--cyan));}
   .session-timer .gauge-fill{transition:width 1s linear, background-color 0.4s ease;}
 
+  /* Key behavior traits / Common objections / Session goals */
+  .chip-row{display:flex; flex-wrap:wrap; gap:6px; margin-top:10px;}
+  .side-section{margin-top:14px;}
+  .side-label{font-family:var(--font-mono); font-size:10px; text-transform:uppercase; letter-spacing:1.5px; color:var(--text-faint); margin-bottom:8px;}
+  .objection-list{display:flex; flex-direction:column; gap:6px;}
+  .objection-item{
+    display:flex; align-items:center; gap:10px; width:100%; text-align:left; cursor:pointer;
+    background:var(--bg-panel-2); border:1px solid var(--border); border-radius:10px; padding:9px 12px;
+    color:var(--text-dim); font-family:inherit; font-size:12.5px; transition:border-color .15s, color .15s;
+  }
+  .objection-item::before{content:''; width:7px; height:7px; border-radius:50%; background:var(--text-faint); flex:none;}
+  .objection-item:hover:not(:disabled){border-color:rgba(155,92,255,0.5); color:var(--text);}
+  .objection-item.active{border-color:rgba(155,92,255,0.6); color:var(--text);}
+  .objection-item.active::before{background:var(--purple-glow); box-shadow:0 0 8px var(--purple-glow);}
+  .objection-item:disabled{cursor:default;}
+  .goal-list{display:flex; flex-direction:column; gap:10px;}
+  .goal-item{display:flex; align-items:center; gap:10px; font-size:13px; color:var(--text-dim); cursor:pointer;}
+  .goal-item input{
+    appearance:none; -webkit-appearance:none; width:18px; height:18px; flex:none; margin:0; cursor:pointer;
+    border:1.5px solid var(--text-faint); border-radius:50%; display:grid; place-content:center;
+  }
+  .goal-item input::after{content:''; width:9px; height:5px; border:solid #050611; border-width:0 0 2px 2px; transform:rotate(-45deg) translate(1px,-1px); opacity:0;}
+  .goal-item input:checked{background:var(--good); border-color:var(--good);}
+  .goal-item input:checked::after{opacity:1;}
+  .goal-item input:checked + span{color:var(--text);}
+  .goal-item input:disabled{cursor:default; opacity:0.5;}
+  .goal-item:has(input:disabled){cursor:default;}
+  .goal-recap{margin-top:14px; font-size:13px; color:var(--text-dim); line-height:1.6;}
+  .goal-recap strong{color:var(--text);}
+
   .coach-feed-label{font-family:var(--font-mono); font-size:10px; text-transform:uppercase; letter-spacing:1.5px; color:var(--text-faint); margin-bottom:10px;}
   .coach-feed{height:280px; overflow-y:auto; display:flex; flex-direction:column; gap:8px; padding-right:2px;}
   .coach-entry{
@@ -442,7 +472,13 @@
         <div class="persona-context" style="border-bottom:none; margin-bottom:0;">
           <strong>How they behave</strong>
           <span id="pTraits">—</span>
+          <div class="chip-row" id="pTraitTags"></div>
         </div>
+      </div>
+
+      <div class="side-section hidden" id="objectionsSection">
+        <div class="side-label">Common objections</div>
+        <div class="objection-list" id="objectionList"></div>
       </div>
 
       <button class="btn block" id="startBtn" disabled onclick="startSession()" style="margin-top:16px;">Start practice session</button>
@@ -520,6 +556,16 @@
       </div>
       <div class="coach-feed-label">Coaching feed</div>
       <div class="coach-feed" id="coachFeed"><div class="coach-empty">Start a session to see live coaching here.</div></div>
+
+      <div class="side-section">
+        <div class="side-label">Session goals</div>
+        <div class="goal-list" id="goalList">
+          <label class="goal-item"><input type="checkbox" disabled /><span>Understand their current process</span></label>
+          <label class="goal-item"><input type="checkbox" disabled /><span>Identify the real objection (not just the surface one)</span></label>
+          <label class="goal-item"><input type="checkbox" disabled /><span>Get a specific number or concrete detail</span></label>
+          <label class="goal-item"><input type="checkbox" disabled /><span>Position a next step (pilot, discovery call, etc.)</span></label>
+        </div>
+      </div>
     </div>
 
   </div>
@@ -530,6 +576,7 @@
       <p class="eyebrow">After-action review</p>
       <h2>Debrief</h2>
       <div class="debrief-body" id="debriefText"></div>
+      <div class="goal-recap hidden" id="debriefGoals"></div>
       <div class="end-row" style="display:flex; gap:10px; flex-wrap:wrap;">
         <button class="btn" onclick="resetAll()">Practice another scenario</button>
       </div>
@@ -1043,16 +1090,76 @@ window.onPersonaChange = function(){
   if(!persona){
     scenarioSelect.innerHTML = '<option>Pick a persona first</option>';
     scenarioSelect.disabled = true;
+    renderObjections(null);
     updateStartBtn();
     return;
   }
   scenarioSelect.disabled = false;
   scenarioSelect.innerHTML = '<option value="">Choose what to work on…</option>' +
     persona.scenarios.map(s => `<option value="${s.id}">${s.title} (${s.group_label})</option>`).join('');
+  renderObjections(persona);
   updateStartBtn();
 };
 
-window.onScenarioChange = function(){ updateStartBtn(); };
+window.onScenarioChange = function(){ updateStartBtn(); markActiveObjection(); };
+
+// Common objections: one row per distinct scenario group_label for the
+// chosen persona. Display of existing scenario data, nothing invented.
+// Clicking a row just picks that scenario in the "What to work on" select.
+function renderObjections(persona){
+  const section = document.getElementById('objectionsSection');
+  const list = document.getElementById('objectionList');
+  list.innerHTML = '';
+  if(!persona || !persona.scenarios.length){ section.classList.add('hidden'); return; }
+  const seen = new Set();
+  persona.scenarios.forEach(sc => {
+    if(seen.has(sc.group_label)) return; // two scenarios in one group -> one row, first wins
+    seen.add(sc.group_label);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'objection-item';
+    btn.dataset.scenarioId = sc.id;
+    btn.textContent = sc.group_label;
+    btn.onclick = () => {
+      const sel = document.getElementById('scenarioSelect');
+      if(sel.disabled) return;
+      sel.value = sc.id;
+      onScenarioChange();
+    };
+    list.appendChild(btn);
+  });
+  section.classList.remove('hidden');
+  markActiveObjection();
+}
+
+function markActiveObjection(){
+  const sel = document.getElementById('scenarioSelect');
+  const persona = currentPersona;
+  const chosen = persona && persona.scenarios.find(sc => sc.id === sel.value);
+  document.querySelectorAll('#objectionList .objection-item').forEach(b => {
+    const sc = persona && persona.scenarios.find(x => x.id === b.dataset.scenarioId);
+    b.classList.toggle('active', !!(chosen && sc && sc.group_label === chosen.group_label));
+    b.disabled = sel.disabled; // locked once a session is running, same as the select
+  });
+}
+
+// Session goals: self-checked by the consultant, browser-only state, no
+// backend or Claude call. Reset when a session starts or is torn down.
+function setGoals(enabled, reset){
+  document.querySelectorAll('#goalList input').forEach(cb => {
+    if(reset) cb.checked = false;
+    cb.disabled = !enabled;
+  });
+}
+
+function goalRecapHtml(){
+  const items = [...document.querySelectorAll('#goalList .goal-item')].map(l => ({
+    done: l.querySelector('input').checked, text: l.querySelector('span').textContent,
+  }));
+  const done = items.filter(i => i.done).length;
+  const list = items.map(i => (i.done ? '\u2713 ' : '\u25CB ') + i.text).join('<br>');
+  return `<strong>Session goals you checked off: ${done} of ${items.length}</strong><br>${list}`;
+}
 
 function updateStartBtn(){
   const p = document.getElementById('personaSelect').value;
@@ -1087,6 +1194,8 @@ window.startSession = async function(){
     document.getElementById('personaSelect').disabled = true;
     document.getElementById('scenarioSelect').disabled = true;
     document.getElementById('callDirectionSelect').disabled = true;
+    markActiveObjection(); // lock the objection rows along with the select
+    setGoals(true, true);
 
     document.getElementById('personaDetails').classList.remove('hidden');
     document.getElementById('personaPhotoText').textContent = currentPersona.name;
@@ -1094,6 +1203,14 @@ window.startSession = async function(){
     document.getElementById('pScenarioTag').textContent = currentScenario.group_label;
     document.getElementById('pContext').textContent = currentPersona.context;
     document.getElementById('pTraits').textContent = currentPersona.traits;
+    const tagRow = document.getElementById('pTraitTags');
+    tagRow.innerHTML = '';
+    (currentPersona.trait_tags || []).forEach(t => {
+      const chip = document.createElement('span');
+      chip.className = 'tag';
+      chip.textContent = t;
+      tagRow.appendChild(chip);
+    });
 
     document.getElementById('chat').innerHTML = '';
     // Outbound sessions start with an empty conversation on purpose (see
@@ -1502,6 +1619,10 @@ window.endSession = async function(){
     document.getElementById('restartBtn').classList.add('hidden');
     document.getElementById('debriefScreen').classList.remove('hidden');
     document.getElementById('debriefText').textContent = res.debrief;
+    const recap = document.getElementById('debriefGoals');
+    recap.innerHTML = goalRecapHtml();
+    recap.classList.remove('hidden');
+    setGoals(false, false); // frozen so the recap and the panel agree
     document.getElementById('debriefScreen').scrollIntoView({ behavior: 'smooth' });
     setComposerEnabled(false); // session is over, nothing left to send to
   }catch(e){
@@ -1533,6 +1654,9 @@ window.resetAll = function(){
   stopTimer();
   resetTimerDisplay();
   document.getElementById('debriefScreen').classList.add('hidden');
+  document.getElementById('debriefGoals').classList.add('hidden');
+  setGoals(false, true);
+  renderObjections(null);
   document.getElementById('personaSelect').disabled = false;
   document.getElementById('personaSelect').value = '';
   document.getElementById('callDirectionSelect').disabled = false;
