@@ -6,7 +6,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>ConsultCastAI — AI Curator LLC</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700;800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&family=Caveat:wght@600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700;800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&family=Pacifico&display=swap" rel="stylesheet">
 <style>
   :root{
     --bg: #050611;
@@ -55,10 +55,14 @@
      interactivity keep it from competing with the status badge/profile
      icon for attention. */
   .header-tagline{
-    font-family:'Caveat', cursive; font-size:23px; font-weight:600; line-height:1;
-    background:linear-gradient(135deg, var(--blue-glow), var(--purple-glow));
+    font-family:'Pacifico', cursive; font-size:24px; font-weight:400; line-height:1;
+    background:linear-gradient(90deg, var(--blue-glow), var(--purple-glow));
     -webkit-background-clip:text; background-clip:text; color:transparent;
-    opacity:0.75; white-space:nowrap; user-select:none; pointer-events:none;
+    /* Faux neon glow: text-shadow can't follow the gradient fill itself, so
+       this layers a blue glow and a purple glow underneath, reading as a
+       soft mixed glow behind the gradient text rather than a flat color. */
+    filter: drop-shadow(0 0 6px rgba(91,127,255,0.55)) drop-shadow(0 0 10px rgba(155,92,255,0.4));
+    white-space:nowrap; user-select:none; pointer-events:none;
   }
 
   .conn{display:flex; align-items:center; gap:10px;}
