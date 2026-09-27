@@ -215,6 +215,12 @@
   .live-badge::before{content:''; width:6px; height:6px; border-radius:50%; background:#fff;}
   .avatar-live-box.streaming{border-color:var(--blue); box-shadow:0 0 0 1px var(--blue), 0 0 24px rgba(91,127,255,0.35);}
   .avatar-live-box.streaming .live-badge{display:inline-flex;}
+  /* Shown instead of (never alongside) LIVE: the avatar tile shouldn't just
+     look frozen mid-frame with no explanation while paused. */
+  .paused-badge{display:none; position:absolute; top:10px; left:10px; z-index:2; align-items:center; gap:6px; font-size:11px; font-weight:700; color:#050611; background:var(--warn); padding:4px 10px; border-radius:8px;}
+  .video-call-row.paused .paused-badge{display:inline-flex;}
+  .video-call-row.paused .live-badge{display:none;}
+  .video-call-row.paused .avatar-live-box, .video-call-row.paused .self-view-box{opacity:0.5;}
   .tile-name{position:absolute; left:10px; bottom:10px; z-index:2; display:flex; flex-direction:column; font-size:11px; line-height:1.3; color:var(--text-dim); background:rgba(5,6,17,0.66); padding:5px 10px; border-radius:8px; max-width:70%;}
   .tile-name strong{color:var(--text); font-size:12.5px;}
   .self-view-box{
@@ -588,6 +594,7 @@
           <img id="avatarStill" class="avatar-still hidden" alt="" />
           <span class="avatar-still-text" id="avatarStillText"></span>
           <span class="live-badge">LIVE</span>
+          <span class="paused-badge">PAUSED</span>
           <div class="tile-name"><strong id="avatarName"></strong><span id="avatarRole"></span></div>
         </div>
         <div id="selfView" class="self-view-box">
@@ -609,6 +616,10 @@
         <button class="ctl ctl-gradient" id="videoBtn" onclick="toggleVideo()" disabled title="Your camera preview (never recorded or sent anywhere)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3z"/></svg>
           <span id="videoLabel">Start Video</span>
+        </button>
+        <button class="ctl" id="pauseBtn" onclick="togglePause()" disabled title="Pause without ending the session (disconnects the live avatar so it doesn't keep costing minutes)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" id="pauseIcon"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+          <span id="pauseLabel">Pause</span>
         </button>
         <button class="ctl ctl-warn hidden" id="restartBtn" onclick="restartSession()" title="Ends the session without generating a debrief">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="14" height="14" rx="3"/></svg>
@@ -773,6 +784,8 @@ let sessionId = null;
 let recognizing = false;
 let recognizer = null;
 let outputMode = 'voice';      // 'text' | 'voice' | 'avatar' — defaults to voice
+let sessionPaused = false;
+let pausedAt = null;
 let sessionStartedAt = null;
 let timerInterval = null;
 
@@ -784,8 +797,11 @@ const TIME_MAX_SEC = 15 * 60;
 const TIME_YELLOW_AT_SEC = 10 * 60;
 const TIME_RED_AT_SEC = 13 * 60;
 
+// Arms the ticking interval only — does NOT touch sessionStartedAt. A fresh
+// session sets that itself (see startSession) before calling this; resuming
+// from a pause has already shifted it forward to exclude the paused
+// duration (see resumeSession), and this must not stomp on that.
 function startTimer(){
-  sessionStartedAt = Date.now();
   stopTimer(); // clear any stray interval from a previous session
   timerInterval = setInterval(updateTimerDisplay, 1000);
   updateTimerDisplay();
@@ -1382,6 +1398,7 @@ window.startSession = async function(){
     document.getElementById('coachFeed').innerHTML = '';
     updateMeters(session.pressure, session.trust, session.specificity);
     addCoachEntry('neutral', 'Session started. Coaching appears after your first response.');
+    sessionStartedAt = Date.now();
     startTimer();
     setComposerEnabled(true);
     document.getElementById('msgInput').placeholder = hasOpener
@@ -1731,15 +1748,18 @@ function setComposerEnabled(enabled){
   input.disabled = !enabled;
   document.getElementById('sendBtn').disabled = !enabled;
   mic.disabled = !enabled;
-  ['muteBtn', 'videoBtn'].forEach(id => { document.getElementById(id).disabled = !enabled; });
+  ['muteBtn', 'videoBtn', 'pauseBtn'].forEach(id => { document.getElementById(id).disabled = !enabled; });
   input.placeholder = enabled ? 'Type your response, or use the mic...' : 'Start a session to send a message...';
   mic.title = enabled ? 'Speak your response' : 'Start a session first';
 }
 
 function setMicBusy(busy){
   const btn = document.getElementById('micBtn');
-  btn.disabled = busy;
-  btn.title = busy ? "Wait for her to finish speaking" : "Speak your response";
+  // sessionPaused wins even if something else tries to clear busy — see the
+  // race note on pauseSession() below (canceling mid-speech resolves the
+  // speaking promise, whose own .finally calls setMicBusy(false)).
+  btn.disabled = busy || sessionPaused;
+  btn.title = sessionPaused ? "Paused" : busy ? "Wait for her to finish speaking" : "Speak your response";
   if(busy && recognizing && recognizer){ recognizer.stop(); } // stop if it was somehow still listening
 }
 
@@ -1753,6 +1773,7 @@ function startListening(){
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if(!SpeechRecognition) return; // silent no-op for auto-start; toggleMic() alerts on a manual click instead
   const btn = document.getElementById('micBtn');
+  if(sessionPaused) return; // paused — see the race note on pauseSession()
   if(micMuted) return; // the consultant muted the auto-mic
   if(recognizing || btn.disabled) return; // already listening, or not our turn (busy/no session)
   recognizer = new SpeechRecognition();
@@ -1781,6 +1802,58 @@ window.toggleMic = function(){
   startListening();
 };
 
+// Pause: disconnects the live avatar (the actual point — no Anam stream, no
+// cost while nothing's happening) and stops the session timer, WITHOUT
+// letting the paused duration silently count as elapsed time. sessionPaused
+// also gets checked by setMicBusy()/startListening() above: canceling
+// mid-sentence speech (either speechSynthesis or the avatar) resolves
+// speakPersonaLine's own promise, and its .finally would otherwise
+// re-enable the mic and start listening again right underneath the pause —
+// those two checks are what stop that from winning the race.
+function setSessionPaused(paused){
+  sessionPaused = paused;
+  document.getElementById('videoCallRow').classList.toggle('paused', paused);
+  document.getElementById('pauseIcon').innerHTML = paused
+    ? '<polygon points="7,5 19,12 7,19" fill="currentColor" stroke="none"/>'   // play triangle — filled, unlike the parent svg's outlined pause bars
+    : '<rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/>'; // pause bars
+  document.getElementById('pauseLabel').textContent = paused ? 'Resume' : 'Pause';
+  document.getElementById('pauseBtn').classList.toggle('active', paused);
+  document.getElementById('pauseBtn').title = paused ? 'Resume the session' : "Pause without ending the session (disconnects the live avatar so it doesn't keep costing minutes)";
+  setMicBusy(sessionPaused ? true : false); // re-asserts the disabled state either way, closing the race noted above
+  setSendBusy(paused);
+}
+
+window.togglePause = function(){
+  if(sessionPaused) resumeSession();
+  else pauseSession();
+};
+
+function pauseSession(){
+  if(!sessionId || sessionPaused) return;
+  pausedAt = Date.now();
+  stopTimer(); // just clears the interval — see resumeSession() for the elapsed-time fix
+  if(outputMode === 'avatar') stopAvatar();
+  if('speechSynthesis' in window) window.speechSynthesis.cancel(); // stop any mid-sentence speech
+  stopListening();
+  setSessionPaused(true);
+}
+
+function resumeSession(){
+  if(!sessionId || !sessionPaused) return;
+  if(pausedAt){
+    // Shift the start time forward by exactly how long the pause lasted, so
+    // the elapsed-time math (Date.now() - sessionStartedAt) excludes it —
+    // otherwise resuming after a 5-minute pause would show a timer (and
+    // pressure-zone coloring) that jumped 5 minutes.
+    sessionStartedAt += Date.now() - pausedAt;
+    pausedAt = null;
+  }
+  setSessionPaused(false);
+  startTimer(); // resumes ticking from the correct (adjusted) elapsed point
+  if(outputMode === 'avatar') startAvatar(); // a genuinely new Anam session/stream, not an unpause — same brief connect delay as starting fresh
+  startListening(); // it's the consultant's turn again, same as after the persona finishes speaking
+}
+
 window.endSession = async function(){
   if(!sessionId) return;
   const btn = document.getElementById('endBtn');
@@ -1792,6 +1865,7 @@ window.endSession = async function(){
     const res = await api(`/sessions/${sessionId}/end`, { method: 'POST' });
     stopAvatar();
     stopListening();
+    pausedAt = null; setSessionPaused(false); // don't carry paused state into whatever session comes next
     document.getElementById('centerActive').classList.add('hidden');
     document.getElementById('centerEmpty').classList.remove('hidden');
     setLiveChrome(false);
@@ -1849,6 +1923,7 @@ window.resetAll = function(){
   setPersonaPhoto(null);
   setLiveChrome(false);
   micMuted = false; syncMuteBtn();
+  pausedAt = null; setSessionPaused(false); // don't carry paused state into whatever session comes next
   document.getElementById('startBtn').classList.remove('hidden');
   document.getElementById('endBtn').classList.add('hidden');
   document.getElementById('restartBtn').classList.add('hidden');
