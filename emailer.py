@@ -122,3 +122,20 @@ def send_admin_notification_email(new_user_email: str) -> None:
         dev_log_link="(no link for this one — approve from the app's Pending Requests panel)",
         what="admin signup notification",
     )
+
+
+def send_team_invite_email(to_email: str, token: str) -> None:
+    """The invited teammate never sees Checkout or pays individually — this
+    link takes them straight to signup with the invite pre-filled, joining
+    the team the moment they set a password (see main.py's /auth/signup)."""
+    import urllib.parse
+    invite_url = f"{frontend_url()}/?invite_token={urllib.parse.quote(token)}&invite_email={urllib.parse.quote(to_email)}"
+    _send(
+        to_email,
+        "You've been invited to a ConsultCastAI team",
+        "<p>You've been invited to join a team on ConsultCastAI.</p>"
+        f'<p>Click to accept and create your account: <a href="{invite_url}">{invite_url}</a></p>'
+        "<p>No payment needed — you're joining an already-subscribed team.</p>",
+        dev_log_link=invite_url,
+        what="team invite",
+    )

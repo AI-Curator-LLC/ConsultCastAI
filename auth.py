@@ -29,6 +29,7 @@ from datetime import datetime, timezone
 from fastapi import Depends, Header, HTTPException
 
 import store
+import teams
 import users
 
 _DEV_AUTH_BYPASS_ENV = "CONSULTCASTAI_DEV_AUTH_BYPASS"  # "1"/"0", overrides the storage-based default
@@ -115,9 +116,10 @@ def require_admin(user: AuthUser = Depends(verify_user)) -> AuthUser:
     return user
 
 
-# Pro tier's monthly session cap (see the Stripe integration spec: Team,
-# with its own pooled/per-seat shape, is deliberately not built yet).
+# Monthly session caps. Team's is pooled across every member (see
+# store.get_team_usage), not per-seat — a 5-seat team still shares one 100.
 PRO_MONTHLY_SESSION_CAP = 20
+TEAM_MONTHLY_SESSION_CAP = 100
 
 
 def require_active_plan(user: AuthUser = Depends(require_approved)) -> AuthUser:
@@ -129,25 +131,34 @@ def require_active_plan(user: AuthUser = Depends(require_approved)) -> AuthUser:
 
     Admins bypass entirely (no subscription to check), matching
     require_owner's existing admin-bypass convention above — otherwise the
-    moment this ships, every admin account (including whichever one
+    moment this shipped, every admin account (including whichever one
     bootstrapped the approval system) would itself fail this check, having
     no subscription at all, the same class of self-lockout mistake flagged
-    on the last two features. A manually-approved-but-unsubscribed regular
+    on earlier features. A manually-approved-but-unsubscribed regular
     account is NOT exempted, though: approval and having an active
-    subscription are two separate gates now (subscribing satisfies both,
-    per the Stripe webhook; manual admin approval only satisfies
-    require_approved)."""
+    subscription (individual or via a team) are two separate gates now.
+
+    A team member's own account has no subscription of its own at all —
+    they ride entirely on their team's, checked via account.team_id."""
     if _dev_bypass_enabled() or user.is_admin:
         return user
     account = users.get_user_by_id(user.rep_id)
-    if not account or not users.subscription_active(account):
+    if not account:
         raise HTTPException(status_code=402, detail="Your subscription isn't active. Please subscribe or update your billing.")
 
     month_key = datetime.now(timezone.utc).strftime("%Y-%m")
-    usage = store.get_usage(user.rep_id, month_key)
-    if usage.session_count >= PRO_MONTHLY_SESSION_CAP:
-        raise HTTPException(
-            status_code=402,
-            detail=f"You've used your {PRO_MONTHLY_SESSION_CAP} sessions this month. Resets next month.",
-        )
+    if account.team_id:
+        team = teams.get_team(account.team_id)
+        if not team or not teams.team_subscription_active(team):
+            raise HTTPException(status_code=402, detail="Your team's subscription isn't active. Contact your team owner.")
+        usage = store.get_team_usage(team.id, month_key)
+        cap = TEAM_MONTHLY_SESSION_CAP
+    else:
+        if not users.subscription_active(account):
+            raise HTTPException(status_code=402, detail="Your subscription isn't active. Please subscribe or update your billing.")
+        usage = store.get_usage(user.rep_id, month_key)
+        cap = PRO_MONTHLY_SESSION_CAP
+
+    if usage.session_count >= cap:
+        raise HTTPException(status_code=402, detail=f"You've used your {cap} sessions this month. Resets next month.")
     return user

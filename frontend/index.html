@@ -574,7 +574,8 @@
           <div class="who" id="profileEmail"></div>
           <button role="menuitem" onclick="openProfile()">Profile</button>
           <button role="menuitem" onclick="openDebriefHistory()">Debrief History</button>
-          <button role="menuitem" onclick="openBillingPortal()">Manage subscription</button>
+          <button role="menuitem" id="manageSubBtn" onclick="openBillingPortal()">Manage subscription</button>
+          <button role="menuitem" class="hidden" id="teamMenuBtn" onclick="openTeamScreen()">Team</button>
           <button role="menuitem" class="hidden" id="pendingRequestsMenuBtn" onclick="openPendingRequests()">Pending Requests</button>
           <button id="logoutBtn" class="danger" role="menuitem" onclick="logout()">Log out</button>
         </div>
@@ -933,12 +934,15 @@
     <p class="auth-note">Or skip the wait: subscribe and you're in immediately.</p>
     <p class="auth-error hidden" id="checkoutError"></p>
     <button class="btn block" id="checkoutBtnMonthly" style="margin-bottom:10px;" onclick="startCheckout('pro_monthly')">ConsultCastAI Pro — $129/month</button>
-    <button class="btn block" id="checkoutBtnAnnual" style="margin-bottom:10px;" onclick="startCheckout('pro_annual')">ConsultCastAI Pro — $1,316/year</button>
+    <button class="btn block" id="checkoutBtnAnnual" style="margin-bottom:18px;" onclick="startCheckout('pro_annual')">ConsultCastAI Pro — $1,316/year</button>
+    <p class="field-label" style="margin-bottom:8px;">Or for a team (5 seats, pooled usage)</p>
+    <button class="btn ghost block" id="checkoutBtnTeamMonthly" style="margin-bottom:10px;" onclick="startCheckout('team_monthly')">ConsultCastAI Team — $599/month</button>
+    <button class="btn ghost block" id="checkoutBtnTeamAnnual" style="margin-bottom:18px;" onclick="startCheckout('team_annual')">ConsultCastAI Team — $6,110/year</button>
     <!-- FTC "click to cancel" disclosure: substance, not boilerplate — this
          is real auto-renewing billing, so how it renews and how to stop it
          has to be stated plainly right next to the buttons that start it. -->
     <p style="font-size:11.5px; color:var(--text-faint); line-height:1.5; margin:0 0 22px;">
-      Billed automatically at the interval selected, renews until canceled. Cancel anytime from Profile → Manage subscription — access continues through the period you've already paid for.
+      Billed automatically at the interval selected, renews until canceled. Cancel anytime from Profile → Manage subscription — access continues through the period you've already paid for. On a Team plan, canceling ends access for every invited member, not just the owner.
     </p>
     <button class="btn ghost block" onclick="logout()">Log out</button>
   </div>
@@ -952,6 +956,38 @@
     <div id="pendingRequestsList"><p class="history-empty">Loading…</p></div>
     <div class="end-row">
       <button class="btn ghost" onclick="closePendingRequests()">Close</button>
+    </div>
+  </div>
+</section>
+
+<!-- TEAM (owner only) -->
+<section id="teamScreen" class="hidden" style="margin-top:20px;">
+  <div class="panel">
+    <p class="eyebrow">Team</p>
+    <h2>Manage your team</h2>
+    <p class="auth-note" id="teamSummary">Loading…</p>
+    <!-- Canceling is standard Stripe Customer Portal behavior (Manage
+         subscription), not a separate control here — this is just making
+         sure an owner understands the blast radius before they use it. -->
+    <p class="auth-note" style="color:var(--warn);">Canceling the subscription (via Manage subscription) ends access for every invited member, not just you — they were never paying individually, they're riding on this one subscription.</p>
+
+    <div class="side-section">
+      <div class="side-label">Members</div>
+      <div id="teamMembersList"><p class="history-empty">Loading…</p></div>
+    </div>
+
+    <div class="side-section">
+      <div class="side-label">Invite a teammate</div>
+      <div class="composer">
+        <input class="text-input" id="teamInviteEmail" type="email" placeholder="teammate@company.com" />
+        <button class="btn" id="teamInviteBtn" onclick="submitTeamInvite()">Invite</button>
+      </div>
+      <p class="auth-error hidden" id="teamInviteError" style="margin-top:10px;"></p>
+      <p class="auth-note success hidden" id="teamInviteSuccess" style="margin-top:10px;"></p>
+    </div>
+
+    <div class="end-row">
+      <button class="btn ghost" onclick="closeTeamScreen()">Close</button>
     </div>
   </div>
 </section>
@@ -1182,6 +1218,7 @@ async function api(path, opts={}){
 let authMode = 'login'; // 'login' | 'signup' | 'forgot' | 'reset'
 let flashBanner = false; // a ?verified=... message is showing, don't overwrite it with the generic prompt
 let resetToken = null;   // from the emailed ?reset_token=... link, held only in memory
+let inviteToken = null;  // from an emailed team-invite link, held only in memory; rides along on /auth/signup
 
 function clearToken(){
   TOKEN = '';
@@ -1194,7 +1231,7 @@ function handleUnauthorized(){
   closeProfileMenu();
   document.getElementById('profileWrap').classList.add('hidden');
   hidePendingScreen();
-  if(resetToken) return; // mid password-reset: keep that screen up, don't swap it for the login form
+  if(resetToken || inviteToken) return; // mid password-reset or accepting a team invite: keep that screen up, don't swap it for the login form
   showAuthScreen('login', hadToken ? 'Your session expired, please log in again.' : '');
 }
 
@@ -1220,6 +1257,12 @@ const AUTH_MODES = {
 };
 
 function setAuthMode(mode){
+  if(mode !== 'signup' && inviteToken){
+    // Abandoning the invite flow (e.g. clicked "Log in" instead) — release
+    // the locked, pre-filled email field along with it.
+    inviteToken = null;
+    document.getElementById('authEmail').readOnly = false;
+  }
   authMode = mode;
   const m = AUTH_MODES[mode];
   const newPassword = mode === 'signup' || mode === 'reset';
@@ -1283,7 +1326,10 @@ async function submitAuth(e){
   }
 
   const path = { login: '/auth/login', signup: '/auth/signup', forgot: '/auth/forgot-password', reset: '/auth/reset-password' }[mode];
-  const body = mode === 'reset' ? { token: resetToken, password } : mode === 'forgot' ? { email } : { email, password };
+  const body = mode === 'reset' ? { token: resetToken, password }
+    : mode === 'forgot' ? { email }
+    : mode === 'signup' && inviteToken ? { email, password, invite_token: inviteToken }
+    : { email, password };
 
   const btn = document.getElementById('authSubmitBtn');
   btn.disabled = true;
@@ -1320,6 +1366,7 @@ async function submitAuth(e){
     }
 
     if(mode === 'reset') resetToken = null;
+    if(mode === 'signup' && inviteToken){ inviteToken = null; document.getElementById('authEmail').readOnly = false; }
     TOKEN = data.token;
     localStorage.setItem('consultcastai_token', TOKEN);
     setAuthNote('');
@@ -1649,8 +1696,87 @@ async function loadPendingRequests(){
   });
 }
 
+// --- Team management (owner only) ---------------------------------------
+window.openTeamScreen = function(){
+  closeProfileMenu();
+  document.getElementById('teamInviteError').classList.add('hidden');
+  document.getElementById('teamInviteSuccess').classList.add('hidden');
+  document.getElementById('teamInviteEmail').value = '';
+  document.getElementById('teamScreen').classList.remove('hidden');
+  document.getElementById('teamScreen').scrollIntoView({ behavior: 'smooth' });
+  loadTeamScreen();
+};
+
+window.closeTeamScreen = function(){
+  document.getElementById('teamScreen').classList.add('hidden');
+};
+
+async function loadTeamScreen(){
+  const summary = document.getElementById('teamSummary');
+  const list = document.getElementById('teamMembersList');
+  summary.textContent = 'Loading…';
+  list.innerHTML = '<p class="history-empty">Loading…</p>';
+  let team;
+  try{
+    team = await api('/team/mine');
+  }catch(e){
+    summary.textContent = 'Could not load your team: ' + e.message;
+    list.innerHTML = '';
+    return;
+  }
+  summary.textContent = `${team.seats_used} / ${team.seat_limit} seats used · ${team.usage_this_month} / ${team.monthly_cap} pooled sessions this month`;
+  document.getElementById('teamInviteBtn').disabled = team.seats_used >= team.seat_limit;
+
+  list.innerHTML = '';
+  team.members.forEach(m => {
+    const row = document.createElement('div');
+    row.className = 'history-row';
+    const summaryRow = document.createElement('div');
+    summaryRow.className = 'history-summary';
+    summaryRow.style.cursor = 'default';
+
+    const main = document.createElement('div');
+    main.className = 'history-main';
+    main.textContent = m.email + (m.is_owner ? ' (owner)' : '');
+
+    const meta = document.createElement('div');
+    meta.className = 'history-meta';
+    meta.textContent = m.created_at ? new Date(m.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '';
+
+    summaryRow.append(main, meta);
+    row.appendChild(summaryRow);
+    list.appendChild(row);
+  });
+}
+
+window.submitTeamInvite = async function(){
+  const btn = document.getElementById('teamInviteBtn');
+  const errEl = document.getElementById('teamInviteError');
+  const okEl = document.getElementById('teamInviteSuccess');
+  errEl.classList.add('hidden');
+  okEl.classList.add('hidden');
+  const email = document.getElementById('teamInviteEmail').value.trim();
+  if(!email){
+    errEl.textContent = 'Enter an email address.';
+    errEl.classList.remove('hidden');
+    return;
+  }
+  btn.disabled = true;
+  try{
+    await api('/team/invite', { method: 'POST', body: JSON.stringify({ email }) });
+    okEl.textContent = `Invite sent to ${email}.`;
+    okEl.classList.remove('hidden');
+    document.getElementById('teamInviteEmail').value = '';
+  }catch(e){
+    errEl.textContent = 'Could not send invite: ' + e.message;
+    errEl.classList.remove('hidden');
+  }finally{
+    btn.disabled = false;
+  }
+};
+
 window.startCheckout = async function(plan){
-  const buttons = [document.getElementById('checkoutBtnMonthly'), document.getElementById('checkoutBtnAnnual')];
+  const buttons = ['checkoutBtnMonthly', 'checkoutBtnAnnual', 'checkoutBtnTeamMonthly', 'checkoutBtnTeamAnnual'].map(id => document.getElementById(id));
   const errEl = document.getElementById('checkoutError');
   errEl.classList.add('hidden');
   buttons.forEach(b => b.disabled = true);
@@ -1695,6 +1821,11 @@ function onAuthenticated(me){
   // Nothing to log out of in dev bypass (no real session), so no menu either.
   document.getElementById('profileWrap').classList.toggle('hidden', !!me.dev_bypass || !TOKEN);
   document.getElementById('pendingRequestsMenuBtn').classList.toggle('hidden', !me.is_admin);
+  document.getElementById('teamMenuBtn').classList.toggle('hidden', !me.is_team_owner);
+  // A regular (non-owner) team member never paid anything and has no
+  // billing role — the portal endpoint itself 403s them, so don't even
+  // show a button that dead-ends.
+  document.getElementById('manageSubBtn').classList.toggle('hidden', !!me.team_id && !me.is_team_owner);
 
   // A signed-up-but-not-yet-approved account: real login, real JWT, just
   // not allowed to use anything functional yet (see auth.require_approved).
@@ -1765,6 +1896,25 @@ function handleResetParam(){
   resetToken = t;
   stripQueryParam('reset_token');
   showAuthScreen('reset', '');
+}
+
+// A team-invite email links back here with ?invite_token=...&invite_email=...
+// (see emailer.send_team_invite_email). Pre-fills and locks the email field
+// and switches to signup mode — the invited person never sees Checkout,
+// they're riding on the team owner's existing subscription entirely.
+function handleInviteParam(){
+  const params = new URLSearchParams(location.search);
+  const t = params.get('invite_token');
+  const email = params.get('invite_email');
+  if(!t) return;
+  inviteToken = t;
+  stripQueryParam('invite_token');
+  stripQueryParam('invite_email');
+  showAuthScreen('signup', "You've been invited to join a team — no payment needed, just set a password.");
+  if(email){
+    document.getElementById('authEmail').value = email;
+    document.getElementById('authEmail').readOnly = true; // must match exactly what the invite was sent to
+  }
 }
 
 async function loadPersonas(){
@@ -2604,6 +2754,7 @@ function handlePaymentParam(){
 
 handleVerifiedParam();
 handleResetParam();
+handleInviteParam();
 handlePaymentParam();
 loadPersonas();
 checkAuth();

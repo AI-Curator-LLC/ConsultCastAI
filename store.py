@@ -157,3 +157,15 @@ def increment_session_count(user_id: str, month: str) -> None:
     _get_client().collection(_USAGE_COLLECTION).document(key).set(
         {"user_id": user_id, "month": month, "session_count": firestore.Increment(1)}, merge=True,
     )
+
+
+# Team usage is the exact same storage shape as individual usage — pooling
+# is achieved simply by keying the record on the team's id instead of a
+# member's own id, so every member's sessions land in one shared counter
+# rather than each seat getting its own separate cap.
+def get_team_usage(team_id: str, month: str) -> UsageRecord:
+    return get_usage(team_id, month)
+
+
+def increment_team_session_count(team_id: str, month: str) -> None:
+    increment_session_count(team_id, month)

@@ -86,6 +86,12 @@ class User:
     current_period_end: str | None = None   # ISO-8601 UTC — access valid through this, even after cancellation
     stripe_customer_id: str | None = None
     stripe_subscription_id: str | None = None
+    # Set = this account rides on a team.py Team's pooled subscription
+    # instead of its own (see auth.require_active_plan); NULL = individual
+    # Pro account (or no plan at all). The team owner's own account also
+    # gets this set, to their own team — they count as one of its seats,
+    # not tracked separately.
+    team_id: str | None = None
 
 
 # --- passwords -------------------------------------------------------------
@@ -183,7 +189,8 @@ CREATE TABLE IF NOT EXISTS users (
     subscription_status TEXT,
     current_period_end TEXT,
     stripe_customer_id TEXT,
-    stripe_subscription_id TEXT
+    stripe_subscription_id TEXT,
+    team_id TEXT
 )
 """
 
@@ -206,7 +213,8 @@ CREATE TABLE IF NOT EXISTS users (
     subscription_status TEXT,
     current_period_end TIMESTAMPTZ,
     stripe_customer_id TEXT,
-    stripe_subscription_id TEXT
+    stripe_subscription_id TEXT,
+    team_id TEXT
 )
 """
 
@@ -226,6 +234,7 @@ _ADDED_COLUMNS = [
     ("current_period_end", "TEXT"),
     ("stripe_customer_id", "TEXT"),
     ("stripe_subscription_id", "TEXT"),
+    ("team_id", "TEXT"),
 ]
 
 _schema_ready = False
@@ -334,6 +343,7 @@ def _row_to_user(row) -> User | None:
         current_period_end=row["current_period_end"],
         stripe_customer_id=row["stripe_customer_id"],
         stripe_subscription_id=row["stripe_subscription_id"],
+        team_id=row["team_id"],
     )
 
 
@@ -550,3 +560,19 @@ def subscription_active(user: User) -> bool:
         return True
     end = _parse_utc(user.current_period_end)
     return bool(end and end >= datetime.now(timezone.utc))
+
+
+# --- teams (see teams.py for the Team row itself) -------------------------
+
+def set_team(user_id: str, team_id: str) -> None:
+    _run("UPDATE users SET team_id = ? WHERE id = ?", (team_id, user_id))
+
+
+def count_team_members(team_id: str) -> int:
+    row = _run("SELECT COUNT(*) AS n FROM users WHERE team_id = ?", (team_id,), fetch_one=True)
+    return int(row["n"]) if row else 0
+
+
+def list_team_members(team_id: str) -> list[User]:
+    rows = _run("SELECT * FROM users WHERE team_id = ? ORDER BY created_at ASC", (team_id,), fetch_all=True)
+    return [_row_to_user(r) for r in rows]

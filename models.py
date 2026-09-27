@@ -8,6 +8,10 @@ from pydantic import BaseModel, Field
 class SignupRequest(BaseModel):
     email: str
     password: str
+    # Set only when accepting a team invite link — joins that team instead
+    # of the normal "pending approval, needs their own subscription" path.
+    # See main.py's /auth/signup and teams.py.
+    invite_token: str | None = None
 
 
 class LoginRequest(BaseModel):
@@ -35,7 +39,11 @@ class ChangePasswordRequest(BaseModel):
 
 
 class CheckoutRequest(BaseModel):
-    plan: str  # "pro_monthly" | "pro_annual" — Team is deliberately not built yet, see the phasing note in billing setup
+    plan: str  # "pro_monthly" | "pro_annual" | "team_monthly" | "team_annual"
+
+
+class InviteRequest(BaseModel):
+    email: str
 
 
 class ConversationTurn(BaseModel):

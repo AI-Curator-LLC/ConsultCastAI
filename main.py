@@ -12,6 +12,7 @@ storage required by default, see README.md for the local -> production path.
 import os
 import secrets
 import time
+import uuid
 from datetime import datetime, timezone
 
 import stripe
@@ -26,6 +27,7 @@ import content
 import coaching
 import emailer
 import store
+import teams
 import users
 from models import (
     SignupRequest,
@@ -43,6 +45,7 @@ from models import (
     UpdateProfileRequest,
     ChangePasswordRequest,
     CheckoutRequest,
+    InviteRequest,
 )
 from prompts import build_system_prompt, build_debrief_prompt, build_opener_prompt
 
@@ -91,12 +94,11 @@ print(
 stripe.api_key = os.environ.get("STRIPE_SECRET_KEY", "").strip()
 print(f"[consultcastai] Stripe: {'configured' if stripe.api_key else 'NOT SET (billing endpoints will fail closed)'}")
 
-# Pro only — Team is deliberately not built yet (see the phasing note in
-# the billing spec: it needs a real pooled/seat-based data model, not just
-# two more entries in this dict).
 _STRIPE_PLAN_PRICE_IDS = {
     "pro_monthly": os.environ.get("STRIPE_PRICE_PRO_MONTHLY", "").strip(),
     "pro_annual": os.environ.get("STRIPE_PRICE_PRO_ANNUAL", "").strip(),
+    "team_monthly": os.environ.get("STRIPE_PRICE_TEAM_MONTHLY", "").strip(),
+    "team_annual": os.environ.get("STRIPE_PRICE_TEAM_ANNUAL", "").strip(),
 }
 
 app.add_middleware(
@@ -134,25 +136,52 @@ def signup(req: SignupRequest, background_tasks: BackgroundTasks):
     if users.get_user_by_email(email):
         raise HTTPException(409, "An account with this email already exists")
 
+    # Accepting a team invite: validate it BEFORE creating the account, so a
+    # bad/stale/reused token never leaves an orphaned user row behind.
+    invite = None
+    if req.invite_token:
+        invite = teams.get_invite_by_token(req.invite_token)
+        if not invite or invite.used or invite.email != email:
+            raise HTTPException(400, "Invalid or mismatched invite")
+        team = teams.get_team(invite.team_id)
+        if not team:
+            raise HTTPException(400, "This team no longer exists")
+        # Re-checked here, not just at invite-creation time: several invites
+        # can be outstanding at once, and accepting all of them shouldn't be
+        # able to push a team past its own seat_limit.
+        if users.count_team_members(team.id) >= team.seat_limit:
+            raise HTTPException(400, f"This team is at its {team.seat_limit}-seat limit")
+
     verification_token = secrets.token_urlsafe(32)
     try:
         user = users.create_user(email, users.hash_password(req.password), verification_token)
     except users.EmailTaken:
         raise HTTPException(409, "An account with this email already exists")
 
-    # Covers the bootstrap admin signing up for the first time (or
-    # re-signing up after a deleted account) — the schema-migration half of
-    # this safety net (users._ensure_schema) only ever reaches rows that
-    # already existed before this shipped, not a fresh signup afterward.
-    if users.promote_if_admin_bootstrap(user.id, user.email):
+    if invite:
+        # Joining an already-subscribed team: no Checkout, no separate
+        # approval step, no admin notification (there's nothing to review).
+        users.set_team(user.id, invite.team_id)
+        users.set_approved(user.id, True)
+        teams.mark_invite_used(invite.token)
         user = users.get_user_by_id(user.id)
+    else:
+        # Covers the bootstrap admin signing up for the first time (or
+        # re-signing up after a deleted account) — the schema-migration half
+        # of this safety net (users._ensure_schema) only ever reaches rows
+        # that already existed before this shipped, not a fresh signup
+        # afterward.
+        if users.promote_if_admin_bootstrap(user.id, user.email):
+            user = users.get_user_by_id(user.id)
+        # Heads-up to whoever's set as CONSULTCASTAI_ADMIN_EMAIL, not a gate
+        # on anything — skipped for an invite acceptance, which is already
+        # approved and needs no review.
+        background_tasks.add_task(emailer.send_admin_notification_email, user.email)
 
-    # Soft requirements: sent after the response, and both swallow their own
-    # errors, so a failed send can never block signup. The account is
-    # unapproved by default (see users.approved) — this is a heads-up to
-    # whoever's set as CONSULTCASTAI_ADMIN_EMAIL, not a gate on anything.
+    # Email verification is independent of approval/billing either way, so
+    # this always sends, and both swallow their own errors — a failed send
+    # can never block signup.
     background_tasks.add_task(emailer.send_verification_email, user.email, verification_token)
-    background_tasks.add_task(emailer.send_admin_notification_email, user.email)
 
     # The JWT still issues (keeps the session model consistent — a pending
     # account is logged in, just not able to use anything functional yet),
@@ -248,14 +277,20 @@ def me(user: auth.AuthUser = Depends(auth.verify_user)):
             "email": user.email, "email_verified": True, "dev_bypass": True,
             "created_at": None, "name": None, "company": None,
             "is_admin": True, "approved": True,
+            "team_id": None, "is_team_owner": False,
         }
     account = users.get_user_by_id(user.rep_id)
     if not account:
         raise HTTPException(401, "Account no longer exists, please log in again")
+    is_team_owner = False
+    if account.team_id:
+        team = teams.get_team(account.team_id)
+        is_team_owner = bool(team and team.owner_user_id == account.id)
     return {
         "email": account.email, "email_verified": account.email_verified, "dev_bypass": False,
         "created_at": account.created_at, "name": account.name, "company": account.company,
         "is_admin": account.is_admin, "approved": account.approved,
+        "team_id": account.team_id, "is_team_owner": is_team_owner,
     }
 
 
@@ -364,16 +399,33 @@ def create_checkout_session(req: CheckoutRequest, user: auth.AuthUser = Depends(
 def create_portal_session(user: auth.AuthUser = Depends(auth.verify_user)):
     """Stripe's own hosted Customer Portal: cancel, update the payment
     method, view invoices. Deliberately NOT a custom in-app cancel flow —
-    the portal already handles proration and other edge cases correctly."""
+    the portal already handles proration and other edge cases correctly.
+
+    Team-aware: a team's Stripe customer lives on the teams row, not the
+    owner's own user row, so an owner resolves through their team instead.
+    A regular (non-owner) team member never paid anything and has no
+    billing role at all — letting them into the portal would hand them the
+    owner's payment method and a cancel button for the whole team, so they
+    get a clear 403 instead."""
     if not stripe.api_key:
         raise HTTPException(500, "Billing is not configured")
     account = users.get_user_by_id(user.rep_id)
-    if not account or not account.stripe_customer_id:
+    if not account:
+        raise HTTPException(400, "No billing account on file yet — subscribe first")
+
+    if account.team_id:
+        team = teams.get_team(account.team_id)
+        if not team or team.owner_user_id != user.rep_id:
+            raise HTTPException(403, "Only the team owner can manage billing")
+        customer_id = team.stripe_customer_id
+    else:
+        customer_id = account.stripe_customer_id
+    if not customer_id:
         raise HTTPException(400, "No billing account on file yet — subscribe first")
 
     try:
         portal = stripe.billing_portal.Session.create(
-            customer=account.stripe_customer_id,
+            customer=customer_id,
             return_url=_frontend_url(),
         )
     except stripe.error.StripeError as exc:
@@ -381,6 +433,59 @@ def create_portal_session(user: auth.AuthUser = Depends(auth.verify_user)):
         raise HTTPException(status_code=502, detail="Could not open the billing portal, please try again")
 
     return {"portal_url": portal.url}
+
+
+@app.post("/team/invite")
+def invite_teammate(req: InviteRequest, background_tasks: BackgroundTasks, user: auth.AuthUser = Depends(auth.verify_user)):
+    """Owner-only — checked by actually owning the team (team.owner_user_id),
+    a separate concept from the app's is_admin superuser flag."""
+    account = users.get_user_by_id(user.rep_id)
+    if not account or not account.team_id:
+        raise HTTPException(403, "Only the team owner can invite")
+    team = teams.get_team(account.team_id)
+    if not team or team.owner_user_id != user.rep_id:
+        raise HTTPException(403, "Only the team owner can invite")
+
+    email = users.normalize_email(req.email)
+    if not users.is_valid_email(email):
+        raise HTTPException(400, "Invalid email address")
+    if users.get_user_by_email(email):
+        raise HTTPException(409, "That email already has an account")
+    if users.count_team_members(team.id) >= team.seat_limit:
+        raise HTTPException(400, f"Team is at its {team.seat_limit}-seat limit")
+
+    invite_token = secrets.token_urlsafe(32)
+    teams.create_invite(team.id, email, invite_token)
+    # Same as every other email in this app: fired after the response, and
+    # _send() itself never raises, so a failed send can't break the invite
+    # (the token is already stored — sharing the link manually still works).
+    background_tasks.add_task(emailer.send_team_invite_email, email, invite_token)
+    return {"message": "Invite sent"}
+
+
+@app.get("/team/mine")
+def get_my_team(user: auth.AuthUser = Depends(auth.verify_user)):
+    """Owner-only, matching the spec's Team management view being owner-only
+    end to end — a regular member gets nothing to look at here either."""
+    account = users.get_user_by_id(user.rep_id)
+    if not account or not account.team_id:
+        raise HTTPException(403, "Not on a team")
+    team = teams.get_team(account.team_id)
+    if not team or team.owner_user_id != user.rep_id:
+        raise HTTPException(403, "Only the team owner can view this")
+
+    month_key = datetime.now(timezone.utc).strftime("%Y-%m")
+    usage = store.get_team_usage(team.id, month_key)
+    members = users.list_team_members(team.id)
+    return {
+        "seat_limit": team.seat_limit,
+        "seats_used": len(members),
+        "subscription_status": team.subscription_status,
+        "current_period_end": team.current_period_end,
+        "usage_this_month": usage.session_count,
+        "monthly_cap": auth.TEAM_MONTHLY_SESSION_CAP,
+        "members": [{"email": m.email, "created_at": m.created_at, "is_owner": m.id == team.owner_user_id} for m in members],
+    }
 
 
 @app.post("/billing/webhook")
@@ -418,17 +523,32 @@ async def stripe_webhook(request: Request):
         user_id = obj.get("client_reference_id")
         plan = (obj.get("metadata") or {}).get("plan")
         subscription_id = obj.get("subscription")
+        customer_id = obj.get("customer")
         if not user_id or not plan or not subscription_id:
             print(f"[consultcastai] webhook: checkout.session.completed missing user_id/plan/subscription (plan={plan!r}), ignoring")
             return {"received": True}
-        users.set_subscription(
-            user_id,
-            stripe_customer_id=obj.get("customer"),
-            stripe_subscription_id=subscription_id,
-            plan_tier=plan.split("_")[0],  # "pro" from "pro_monthly"/"pro_annual"
-            status="active",
-        )
-        users.set_approved(user_id, True)  # subscribing satisfies the approval gate too
+        plan_tier = plan.split("_")[0]  # "pro" or "team", from "*_monthly"/"*_annual"
+
+        if plan_tier == "team":
+            team_id = str(uuid.uuid4())
+            teams.create_team(
+                id=team_id,
+                owner_user_id=user_id,
+                stripe_customer_id=customer_id,
+                stripe_subscription_id=subscription_id,
+                subscription_status="active",
+            )
+            users.set_team(user_id, team_id)  # the owner's own account counts as one of the team's seats
+            users.set_approved(user_id, True)
+        else:
+            users.set_subscription(
+                user_id,
+                stripe_customer_id=customer_id,
+                stripe_subscription_id=subscription_id,
+                plan_tier=plan_tier,
+                status="active",
+            )
+            users.set_approved(user_id, True)  # subscribing satisfies the approval gate too
 
     elif event_type == "invoice.payment_succeeded":
         subscription_id = obj.get("subscription")
@@ -437,17 +557,32 @@ async def stripe_webhook(request: Request):
         if not subscription_id or not period_end_ts:
             print(f"[consultcastai] webhook: invoice.payment_succeeded missing subscription/period end, ignoring")
             return {"received": True}
-        users.update_period_end(subscription_id, datetime.fromtimestamp(period_end_ts, tz=timezone.utc))
+        period_end = datetime.fromtimestamp(period_end_ts, tz=timezone.utc)
+        # Renewals fire for a team's subscription too — look up which table
+        # this subscription id actually belongs to and update that one.
+        if teams.get_team_by_subscription_id(subscription_id):
+            teams.update_team_period_end(subscription_id, period_end)
+        else:
+            users.update_period_end(subscription_id, period_end)
 
     elif event_type == "customer.subscription.deleted":
         subscription_id = obj.get("id")
         if subscription_id:
-            users.set_subscription_status(subscription_id, "canceled")
+            if teams.get_team_by_subscription_id(subscription_id):
+                # Every member loses access at current_period_end, not just
+                # the owner — they were never individually paying, they were
+                # riding on this one subscription.
+                teams.set_team_subscription_status(subscription_id, "canceled")
+            else:
+                users.set_subscription_status(subscription_id, "canceled")
 
     elif event_type == "invoice.payment_failed":
         subscription_id = obj.get("subscription")
         if subscription_id:
-            users.set_subscription_status(subscription_id, "past_due")
+            if teams.get_team_by_subscription_id(subscription_id):
+                teams.set_team_subscription_status(subscription_id, "past_due")
+            else:
+                users.set_subscription_status(subscription_id, "past_due")
 
     return {"received": True}
 
@@ -496,9 +631,17 @@ def start_session(req: StartSessionRequest, user: auth.AuthUser = Depends(auth.r
     _start_time[session.id] = time.time()
     # Charged the instant a session actually exists, not speculatively before
     # (a request that 404s/500s above never touched this) — see
-    # auth.require_active_plan for the cap this counts against.
+    # auth.require_active_plan for the cap this counts against. Incremented
+    # under the team's own key for a team member, not their personal one —
+    # has to match exactly what require_active_plan checked against, or the
+    # pooled cap silently stops being pooled.
     if not auth.is_dev_bypass() and not user.is_admin:
-        store.increment_session_count(user.rep_id, datetime.now(timezone.utc).strftime('%Y-%m'))
+        month_key = datetime.now(timezone.utc).strftime('%Y-%m')
+        account = users.get_user_by_id(user.rep_id)
+        if account and account.team_id:
+            store.increment_team_session_count(account.team_id, month_key)
+        else:
+            store.increment_session_count(user.rep_id, month_key)
 
     return session
 

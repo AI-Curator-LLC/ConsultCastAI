@@ -156,10 +156,10 @@ than just leaving it pending or deleting the row directly.
 ## Billing (Stripe subscriptions)
 
 Real recurring billing, not a fixed-term one-time charge: ConsultCastAI Pro
-is $129/month or $1,316/year, renews automatically until canceled, MRR/ARR
-are real numbers. Only Pro is built — Team (multiple seats pooling one
-subscription's usage limit) is a real added data model, deliberately
-deferred, see the phasing note in `main.py`.
+is $129/month or $1,316/year (one account, 20 sessions/month), MRR/ARR are
+real numbers. Team is $599/month or $6,110/year: up to 5 accounts sharing
+one subscription and one pooled 100-session/month cap, with one owner who
+invites the rest — see `teams.py`.
 
 Flow: `POST /billing/create-checkout-session` (any signed-in account, even
 a still-pending one — subscribing is one of the two ways an account becomes
@@ -195,12 +195,54 @@ Required env vars (all `sync: false` in `render.yaml`, fail closed if
 unset — nobody gets free access from a missing key): `STRIPE_SECRET_KEY`,
 `STRIPE_WEBHOOK_SECRET` (from adding an endpoint in the Stripe dashboard for
 `{backend}/billing/webhook`, listening for the four events above),
-`STRIPE_PRICE_PRO_MONTHLY`, `STRIPE_PRICE_PRO_ANNUAL` (the Price IDs from
-the ConsultCastAI Pro product's two Prices, already created in Stripe).
+`STRIPE_PRICE_PRO_MONTHLY`, `STRIPE_PRICE_PRO_ANNUAL`,
+`STRIPE_PRICE_TEAM_MONTHLY`, `STRIPE_PRICE_TEAM_ANNUAL` (the Price IDs from
+each product's two Prices, already created in Stripe).
 
-Not built yet: Team tier, proration on plan changes (the Customer Portal
-handles the basic case), custom dunning logic beyond Stripe's built-in
-retries — all deliberately deferred, not oversights.
+### Team tier
+
+A `team` (its own table, `teams.py`) groups up to `seat_limit` (5) user
+accounts under one subscription and one pooled monthly cap — the owner's
+own account counts as one seat, not tracked separately. `checkout.session.completed`
+branches on the plan prefix (`plan.split("_")[0]`): `"team"` creates the
+`teams` row and sets the owner's `users.team_id`, same as `"pro"` sets the
+individual fields, both then call `set_approved`. The renewal/cancellation/
+failure events look up whether a `stripe_subscription_id` belongs to a team
+or an individual account and update the right table — a team's Stripe
+customer and subscription live on the `teams` row, never on any member's
+own `users` row.
+
+`auth.require_active_plan` branches on `account.team_id`: set means check
+the team's `subscription_status`/`current_period_end` and pool usage under
+`store.get_team_usage(team_id, ...)` instead of the member's own id (same
+storage shape as individual usage, pooling is just using the team's id as
+the key) — a member has no subscription of their own at all, they ride
+entirely on the team's.
+
+`POST /team/invite` (owner-only, checked by actually owning the team, a
+separate concept from `is_admin`) creates a single-use invite token and
+emails a link (`emailer.send_team_invite_email`). Accepting one is just
+`POST /auth/signup` with `invite_token` set: the invited person never sees
+Checkout or pays individually, they join already-approved. Two checks
+beyond the original spec, closing real gaps found while building this: an
+invite can't be redeemed twice (`teams.TeamInvite.used`), and seat capacity
+is re-checked at acceptance, not just at invite time (several invites can
+be outstanding at once). `GET /team/mine` (also owner-only) backs the
+Profile menu's "Team" screen — members, pooled usage, an invite form.
+
+`POST /billing/portal-session` is team-aware too: an owner's Stripe
+customer lives on the `teams` row, not their own `users` row, so they
+resolve through their team; a regular member has no billing role at all
+and gets a 403 rather than the owner's payment method and cancel button
+(a gap in the original portal-session spec, which predates Team). Canceling
+as an owner ends access for every member at `current_period_end`, not just
+the owner — they were never individually paying customers. The frontend
+surfaces this plainly in the Team screen before anyone clicks cancel.
+
+Not built yet: removing/replacing a teammate mid-cycle, per-seat add-ons
+beyond 5, transferring team ownership, proration on plan changes (the
+Customer Portal handles the basic case), custom dunning logic beyond
+Stripe's built-in retries — all deliberately deferred, not oversights.
 
 ## Voice, current state
 
