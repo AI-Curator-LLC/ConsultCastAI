@@ -6,7 +6,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>ConsultCastAI — AI Curator LLC</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700;800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700;800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&family=Caveat:wght@600&display=swap" rel="stylesheet">
 <style>
   :root{
     --bg: #050611;
@@ -48,6 +48,18 @@
   .brand img{height:38px; width:auto; display:block;}
   .brand-text{font-family:var(--font-display); font-size:19px; font-weight:700; letter-spacing:0.2px;}
   .brand-text .ai{background:linear-gradient(135deg, var(--blue-glow), var(--purple-glow)); -webkit-background-clip:text; background-clip:text; color:transparent;}
+  /* Purely decorative flourish filling the header's empty middle strip
+     (between the logo and the connection/profile group) — a script font on
+     purpose, distinct from the UI's clean geometric type, so it reads as
+     brand flourish, not another functional label. Muted opacity and no
+     interactivity keep it from competing with the status badge/profile
+     icon for attention. */
+  .header-tagline{
+    font-family:'Caveat', cursive; font-size:23px; font-weight:600; line-height:1;
+    background:linear-gradient(135deg, var(--blue-glow), var(--purple-glow));
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+    opacity:0.75; white-space:nowrap; user-select:none; pointer-events:none;
+  }
 
   .conn{display:flex; align-items:center; gap:10px;}
   .live-pill{display:inline-flex; align-items:center; gap:8px; padding:7px 14px; border-radius:10px; font-size:13px; font-weight:600;
@@ -542,6 +554,7 @@
     #chat{min-height:160px;}
     .video-call-row{flex-direction:column;}
     .brand-text{font-size:16px;}
+    .header-tagline{display:none;} /* purely decorative, first thing to go when space is tight */
     h2{font-size:15px;}
   }
 </style>
@@ -554,6 +567,7 @@
       <img src="assets/ccai-icon.png" alt="ConsultCastAI" />
       <span class="brand-text">ConsultCast<span class="ai">AI</span></span>
     </div>
+    <span class="header-tagline">Practice. Improve. Win.</span>
     <div class="conn">
       <span class="live-pill hidden" id="livePill">Live</span>
       <span class="timer-pill hidden" id="headerTimer">0:00</span>
