@@ -1857,6 +1857,14 @@ async function startAvatar(){
   }
 }
 
+// Only ever tears down the Anam avatar connection — never the self-camera
+// preview, which is a separate concern the consultant controls with its
+// own "Stop Video" button (see toggleVideo()/startSelfCamera()/
+// stopSelfCamera() below). Pausing a session, for instance, should
+// disconnect the avatar to stop costing minutes without also killing a
+// camera preview the consultant deliberately turned on. Callers that
+// really do want a full teardown (ending/restarting the session, closing
+// the tab) call stopSelfCamera() themselves right alongside this.
 function stopAvatar(){
   if(anamClient && anamActive){
     try{ anamClient.stopStreaming(); }catch(e){ console.warn(e); }
@@ -1871,7 +1879,6 @@ function stopAvatar(){
   box.classList.remove('streaming');
   const video = box.querySelector('video');
   if(video) video.remove();
-  stopSelfCamera();
 }
 
 // --- Self camera: purely visual, makes avatar mode feel like a real video
@@ -1928,8 +1935,11 @@ function stopSelfCamera(){
 // Prevent orphaned Anam sessions: a page reload or tab close doesn't
 // otherwise call stopStreaming(), which can leave sessions counted as
 // "active" against the account's concurrency limit.
-window.addEventListener('beforeunload', () => { if(anamActive) stopAvatar(); });
-window.addEventListener('pagehide', () => { if(anamActive) stopAvatar(); });
+// Full teardown on tab close: the avatar connection AND the camera
+// preview, unlike pauseSession()'s deliberately avatar-only stop.
+function stopAvatarAndCamera(){ stopAvatar(); stopSelfCamera(); }
+window.addEventListener('beforeunload', () => { if(anamActive) stopAvatarAndCamera(); });
+window.addEventListener('pagehide', () => { if(anamActive) stopAvatarAndCamera(); });
 
 function currentPersonaId(){ return currentPersona ? currentPersona.id : null; }
 
@@ -2228,7 +2238,7 @@ window.endSession = async function(){
   btn.textContent = 'Generating debrief…';
   try{
     const res = await api(`/sessions/${sessionId}/end`, { method: 'POST' });
-    stopAvatar();
+    stopAvatarAndCamera();
     stopListening();
     pausedAt = null; setSessionPaused(false); // don't carry paused state into whatever session comes next
     document.getElementById('centerActive').classList.add('hidden');
@@ -2259,7 +2269,7 @@ window.restartSession = function(){
   if(!sessionId) return;
   if(!confirm('Restart without generating a debrief? This abandons the current practice session.')) return;
   stopTimer();
-  stopAvatar();
+  stopAvatarAndCamera();
   document.getElementById('centerActive').classList.add('hidden');
   document.getElementById('centerEmpty').classList.remove('hidden');
   resetAll();
