@@ -4,6 +4,7 @@ pydantic>=2.6
 bcrypt>=4.0
 pyjwt>=2.8
 stripe>=15.0
+slowapi>=0.1.9
 # Only needed if you switch users.py off local-SQLite mode to Postgres
 # (CONSULTCASTAI_LOCAL_USERS=0 + DATABASE_URL). Left out of the default install
 # so a Python-version wheel gap can't break the build for a mode not in use:

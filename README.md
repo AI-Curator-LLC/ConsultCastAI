@@ -148,10 +148,23 @@ optional — nothing breaks if it's unset or a send fails, the real answer
 is always `GET /auth/pending`, and the app's Profile menu -> Pending
 Requests when you're logged in as that admin).
 
-Not built yet: rate limiting on login/signup (add before this goes properly
-public, the reset cooldown is only a per-account email limit, not
-brute-force protection), and a way to deny/reject a pending request rather
-than just leaving it pending or deleting the row directly.
+Rate limiting on the auth endpoints (`slowapi`, in-memory — no Redis needed
+at this scale, a single Render instance): `/auth/login` 5/minute,
+`/auth/signup` 3/hour, `/auth/resend-verification` 3/hour,
+`/auth/forgot-password` 3/hour. Keyed off the real visitor IP, not
+`request.client.host` — Render sits behind a reverse proxy, so that's the
+proxy's own address for every request, and the limiter reads the first
+`X-Forwarded-For` entry instead. Get that wrong and either every visitor
+shares one "IP" (the limiter blocks all your users at once after a handful
+of legitimate logins) or it silently limits nothing at all. This is
+IP-based only, not account-based — a real, further layer worth adding
+eventually if targeted account lockout ever becomes necessary, not required
+for this first pass — and there's no CAPTCHA/bot-detection yet either,
+fine for launch, worth revisiting if abuse shows up.
+
+Not built yet: account-level lockout and CAPTCHA/bot-detection (see above),
+and a way to deny/reject a pending request rather than just leaving it
+pending or deleting the row directly.
 
 ## Billing (Stripe subscriptions)
 

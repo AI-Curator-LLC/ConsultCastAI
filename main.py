@@ -18,6 +18,9 @@ from datetime import datetime, timezone
 import stripe
 from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 from fastapi.responses import RedirectResponse
 
 import auth
@@ -109,6 +112,28 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Rate limiting on auth endpoints (login/signup brute-force, email-sending
+# spam) — in-memory, no Redis needed at this scale (a single Render
+# instance). Would stop being shared across instances if this ever scales
+# out horizontally; not a concern right now.
+#
+# Render sits behind a reverse proxy: request.client.host is the proxy's
+# own internal address for every request, not the real visitor's IP, unless
+# X-Forwarded-For is read explicitly. Get this wrong and either everyone
+# shares one "IP" (the limiter blocks every user at once after a handful of
+# legitimate logins) or it silently limits nothing at all — this is the
+# single most common way rate limiting looks fine locally and does nothing
+# once deployed.
+def get_real_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()  # first entry is the original client
+    return get_remote_address(request)
+
+limiter = Limiter(key_func=get_real_ip)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 _coaching_state: dict[str, coaching.CoachingState] = {}
 _start_time: dict[str, float] = {}
 
@@ -126,7 +151,8 @@ def _issue_or_500(user: users.User) -> str:
 
 
 @app.post("/auth/signup")
-def signup(req: SignupRequest, background_tasks: BackgroundTasks):
+@limiter.limit("3/hour")
+def signup(req: SignupRequest, background_tasks: BackgroundTasks, request: Request):
     email = users.normalize_email(req.email)
     if not users.is_valid_email(email):
         raise HTTPException(400, "Invalid email address")
@@ -191,7 +217,8 @@ def signup(req: SignupRequest, background_tasks: BackgroundTasks):
 
 
 @app.post("/auth/login")
-def login(req: LoginRequest):
+@limiter.limit("5/minute")
+def login(req: LoginRequest, request: Request):
     user = users.get_user_by_email(req.email)
     if not user:
         users.burn_password_check(req.password)  # same response time whether or not the email exists
@@ -215,7 +242,8 @@ def verify_email(token: str):
 
 
 @app.post("/auth/forgot-password")
-def forgot_password(req: ForgotPasswordRequest, background_tasks: BackgroundTasks):
+@limiter.limit("3/hour")
+def forgot_password(req: ForgotPasswordRequest, background_tasks: BackgroundTasks, request: Request):
     """Answers identically whether or not the email has an account, so this
     form can't be used to find out who's registered. The reset email (if any)
     goes out after the response."""
@@ -248,7 +276,8 @@ def reset_password(req: ResetPasswordRequest):
 
 
 @app.post("/auth/resend-verification")
-def resend_verification(background_tasks: BackgroundTasks, user: auth.AuthUser = Depends(auth.verify_user)):
+@limiter.limit("3/hour")
+def resend_verification(background_tasks: BackgroundTasks, request: Request, user: auth.AuthUser = Depends(auth.verify_user)):
     """Re-sends the verification link, for when the original never arrived
     (see emailer.py's docstring on Resend's shared sender). Mints a fresh
     token rather than reusing the one from signup — simpler than depending
