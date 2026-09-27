@@ -69,6 +69,9 @@ class User:
     token_version: int = 0
     reset_token_hash: str | None = None
     reset_token_expires: str | None = None  # ISO-8601 UTC
+    # Profile display only, never fed to prompts or shown to the persona.
+    name: str | None = None
+    company: str | None = None
 
 
 # --- passwords -------------------------------------------------------------
@@ -185,6 +188,8 @@ _ADDED_COLUMNS = [
     ("token_version", "INTEGER NOT NULL DEFAULT 0"),
     ("reset_token_hash", "TEXT"),
     ("reset_token_expires", "TEXT"),
+    ("name", "TEXT"),
+    ("company", "TEXT"),
 ]
 
 _schema_ready = False
@@ -261,6 +266,8 @@ def _row_to_user(row) -> User | None:
         token_version=int(row["token_version"] or 0),
         reset_token_hash=row["reset_token_hash"],
         reset_token_expires=row["reset_token_expires"],
+        name=row["name"],
+        company=row["company"],
     )
 
 
@@ -376,3 +383,20 @@ def reset_password(user_id: str, new_password_hash: str) -> None:
         "token_version = token_version + 1, email_verified = ?, verification_token = NULL WHERE id = ?",
         (new_password_hash, True, user_id),
     )
+
+
+# --- profile -----------------------------------------------------------
+
+def update_profile(user_id: str, name: str | None, company: str | None) -> None:
+    _run("UPDATE users SET name = ?, company = ? WHERE id = ?", (name, company, user_id))
+
+
+def update_password_hash(user_id: str, new_hash: str) -> None:
+    """Sets a new password directly, called only after the caller has already
+    verified the current password (see /auth/change-password). Deliberately
+    doesn't touch token_version, unlike reset_password() above: the caller
+    proved they know the current password within an already-valid session,
+    so there's no reason to log that session itself out. A forgotten-password
+    reset (which by definition wasn't authenticated first) still gets the
+    full token_version bump via reset_password()."""
+    _run("UPDATE users SET password_hash = ? WHERE id = ?", (new_hash, user_id))

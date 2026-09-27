@@ -93,9 +93,11 @@
   .profile-menu .who{padding:8px 10px 10px; font-size:12px; color:var(--text-dim); word-break:break-all; border-bottom:1px solid var(--border); margin-bottom:6px;}
   .profile-menu button{
     width:100%; text-align:left; background:none; border:none; cursor:pointer; font-family:inherit;
-    font-size:13px; font-weight:600; color:#ff8ea1; padding:8px 10px; border-radius:8px;
+    font-size:13px; font-weight:600; color:var(--text); padding:8px 10px; border-radius:8px;
   }
-  .profile-menu button:hover{background:rgba(255,79,109,0.12);}
+  .profile-menu button:hover{background:rgba(255,255,255,0.06);}
+  .profile-menu button.danger{color:#ff8ea1;}
+  .profile-menu button.danger:hover{background:rgba(255,79,109,0.12);}
   .adv-toggle{
     font-family:var(--font-mono); font-size:10.5px; color:var(--text-faint); background:none; border:none;
     cursor:pointer; letter-spacing:0.5px; text-decoration:underline; text-underline-offset:3px;
@@ -453,6 +455,25 @@
   .end-row{margin-top:16px;}
   .debrief-body{white-space:pre-wrap; font-size:14.5px; line-height:1.7; color:var(--text); font-family:var(--font-body);}
 
+  /* --- Debrief History --- */
+  .history-empty{color:var(--text-faint); font-size:13px; font-style:italic;}
+  .history-row{border:1px solid var(--border); border-radius:12px; margin-bottom:10px; overflow:hidden;}
+  .history-summary{
+    display:flex; align-items:center; justify-content:space-between; gap:12px; cursor:pointer;
+    padding:13px 15px; background:var(--bg-panel-2);
+  }
+  .history-summary:hover{background:var(--bg-raised);}
+  .history-main{font-size:14px; font-weight:600;}
+  .history-main .persona{color:var(--text);}
+  .history-main .scenario{color:var(--text-dim); font-weight:500;}
+  .history-meta{font-family:var(--font-mono); font-size:11px; color:var(--text-faint); white-space:nowrap; flex:none;}
+  .history-detail{padding:15px; border-top:1px solid var(--border);}
+
+  /* --- Profile --- */
+  .profile-section-title{font-family:var(--font-display); font-size:14px; font-weight:700; margin:22px 0 14px; padding-top:18px; border-top:1px solid var(--border);}
+  .profile-static{font-size:14px; color:var(--text); padding:2px 0;}
+  .profile-static .muted{color:var(--text-dim); font-size:12.5px;}
+
   .hidden{display:none !important;}
   footer{display:flex; flex-direction:column; align-items:center; gap:8px; margin-top:32px;}
   footer img{height:44px; width:auto; opacity:0.85;}
@@ -545,7 +566,9 @@
         <button class="profile-avatar" id="profileAvatar" aria-haspopup="menu" aria-expanded="false" onclick="toggleProfileMenu(event)"></button>
         <div class="profile-menu" id="profileMenu" role="menu">
           <div class="who" id="profileEmail"></div>
-          <button id="logoutBtn" role="menuitem" onclick="logout()">Log out</button>
+          <button role="menuitem" onclick="openProfile()">Profile</button>
+          <button role="menuitem" onclick="openDebriefHistory()">Debrief History</button>
+          <button id="logoutBtn" class="danger" role="menuitem" onclick="logout()">Log out</button>
         </div>
       </div>
     </div>
@@ -770,6 +793,77 @@
       <div class="goal-recap hidden" id="debriefGoals"></div>
       <div class="end-row" style="display:flex; gap:10px; flex-wrap:wrap;">
         <button class="btn" onclick="resetAll()">Practice another scenario</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- DEBRIEF HISTORY -->
+  <section id="debriefHistoryScreen" class="hidden" style="margin-top:20px;">
+    <div class="panel">
+      <p class="eyebrow">Your past sessions</p>
+      <h2>Debrief History</h2>
+      <div id="debriefHistoryList"><p class="history-empty">Loading…</p></div>
+      <div class="end-row">
+        <button class="btn ghost" onclick="closeDebriefHistory()">Close</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- PROFILE -->
+  <section id="profileScreen" class="hidden" style="margin-top:20px;">
+    <div class="panel auth-card" style="max-width:480px; margin:0 auto;">
+      <p class="eyebrow">Account</p>
+      <h2>Profile</h2>
+
+      <div class="field">
+        <span class="field-label">Email</span>
+        <div class="profile-static" id="profileEmailStatic">—</div>
+      </div>
+      <div class="field">
+        <span class="field-label">Member since</span>
+        <div class="profile-static" id="profileMemberSince">—</div>
+      </div>
+      <div class="field">
+        <span class="field-label">Verification</span>
+        <div class="profile-static">
+          <span id="profileVerifiedStatic">—</span>
+          <span style="margin-left:10px;">
+            <button class="adv-toggle hidden" id="profileResendBtn" onclick="resendVerificationFromProfile()">resend email</button>
+          </span>
+        </div>
+      </div>
+
+      <div class="field">
+        <span class="field-label">Name</span>
+        <input class="text-input" id="profileNameInput" placeholder="Your name" />
+      </div>
+      <div class="field">
+        <span class="field-label">Company</span>
+        <input class="text-input" id="profileCompanyInput" placeholder="Your company" />
+      </div>
+      <p class="auth-error hidden" id="profileSaveError"></p>
+      <p class="auth-note success hidden" id="profileSaveSuccess"></p>
+      <button class="btn" id="profileSaveBtn" onclick="saveProfile()">Save</button>
+
+      <p class="profile-section-title">Change password</p>
+      <div class="field">
+        <span class="field-label">Current password</span>
+        <input class="text-input" id="currentPasswordInput" type="password" autocomplete="current-password" />
+      </div>
+      <div class="field">
+        <span class="field-label">New password</span>
+        <input class="text-input" id="newPasswordInput" type="password" autocomplete="new-password" />
+      </div>
+      <div class="field">
+        <span class="field-label">Confirm new password</span>
+        <input class="text-input" id="confirmNewPasswordInput" type="password" autocomplete="new-password" />
+      </div>
+      <p class="auth-error hidden" id="passwordChangeError"></p>
+      <p class="auth-note success hidden" id="passwordChangeSuccess"></p>
+      <button class="btn" id="changePasswordBtn" onclick="submitChangePassword()">Change password</button>
+
+      <div class="end-row">
+        <button class="btn ghost" onclick="closeProfile()">Close</button>
       </div>
     </div>
   </section>
@@ -1200,8 +1294,10 @@ window.dismissBanner = function(){
 // Re-sends the same verification link (see main.py's /auth/resend-verification).
 // Only ever shown pre-verification, see onAuthenticated below — once an
 // account is verified this banner (and button) never comes back.
-window.resendVerification = async function(){
-  const btn = document.getElementById('resendVerifyBtn');
+// Shared by the banner's "resend email" link and the Profile screen's copy
+// of the same button — both just re-trigger POST /auth/resend-verification.
+async function _resendVerification(btnId){
+  const btn = document.getElementById(btnId);
   const original = btn.textContent;
   btn.disabled = true;
   btn.textContent = 'sending…';
@@ -1215,7 +1311,200 @@ window.resendVerification = async function(){
     return;
   }
   setTimeout(() => { btn.textContent = original; btn.disabled = false; }, 5000);
+}
+window.resendVerification = function(){ _resendVerification('resendVerifyBtn'); };
+window.resendVerificationFromProfile = function(){ _resendVerification('profileResendBtn'); };
+
+// --- Profile ---------------------------------------------------------
+window.openProfile = async function(){
+  closeProfileMenu();
+  document.getElementById('profileSaveError').classList.add('hidden');
+  document.getElementById('profileSaveSuccess').classList.add('hidden');
+  document.getElementById('passwordChangeError').classList.add('hidden');
+  document.getElementById('passwordChangeSuccess').classList.add('hidden');
+  document.getElementById('currentPasswordInput').value = '';
+  document.getElementById('newPasswordInput').value = '';
+  document.getElementById('confirmNewPasswordInput').value = '';
+  document.getElementById('profileScreen').classList.remove('hidden');
+  document.getElementById('profileScreen').scrollIntoView({ behavior: 'smooth' });
+  try{
+    const me = await api('/auth/me');
+    document.getElementById('profileEmailStatic').textContent = me.email || '—';
+    document.getElementById('profileMemberSince').textContent = me.created_at
+      ? new Date(me.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })
+      : '—';
+    const verifiedEl = document.getElementById('profileVerifiedStatic');
+    verifiedEl.textContent = me.email_verified ? 'Verified' : 'Not verified';
+    verifiedEl.style.color = me.email_verified ? 'var(--good)' : 'var(--warn)';
+    document.getElementById('profileResendBtn').classList.toggle('hidden', !!me.email_verified || !!me.dev_bypass);
+    document.getElementById('profileNameInput').value = me.name || '';
+    document.getElementById('profileCompanyInput').value = me.company || '';
+  }catch(e){
+    console.warn('Could not load profile:', e.message);
+  }
 };
+
+window.closeProfile = function(){
+  document.getElementById('profileScreen').classList.add('hidden');
+};
+
+window.saveProfile = async function(){
+  const btn = document.getElementById('profileSaveBtn');
+  const errEl = document.getElementById('profileSaveError');
+  const okEl = document.getElementById('profileSaveSuccess');
+  errEl.classList.add('hidden');
+  okEl.classList.add('hidden');
+  btn.disabled = true;
+  try{
+    await api('/auth/profile', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        name: document.getElementById('profileNameInput').value.trim() || null,
+        company: document.getElementById('profileCompanyInput').value.trim() || null,
+      }),
+    });
+    okEl.textContent = 'Saved.';
+    okEl.classList.remove('hidden');
+  }catch(e){
+    errEl.textContent = 'Could not save: ' + e.message;
+    errEl.classList.remove('hidden');
+  }finally{
+    btn.disabled = false;
+  }
+};
+
+// Deliberately NOT using the shared api() helper here: it treats every 401
+// as "your session expired" and force-logs-out to the login screen
+// (handleUnauthorized()) — exactly wrong for this endpoint, where a 401
+// just means "the current password you typed is wrong", not that the
+// session token itself is invalid. This is otherwise the same fetch
+// wrapper as api() (same headers, same error shape), just without that
+// one side effect.
+async function _changePasswordRequest(current, next){
+  const headers = { 'Content-Type': 'application/json' };
+  if(TOKEN) headers['Authorization'] = 'Bearer ' + TOKEN;
+  const res = await fetch(API_BASE + '/auth/change-password', {
+    method: 'POST', headers,
+    body: JSON.stringify({ current_password: current, new_password: next }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if(!res.ok){
+    const err = new Error(body.detail || `${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
+  return body;
+}
+
+window.submitChangePassword = async function(){
+  const btn = document.getElementById('changePasswordBtn');
+  const errEl = document.getElementById('passwordChangeError');
+  const okEl = document.getElementById('passwordChangeSuccess');
+  errEl.classList.add('hidden');
+  okEl.classList.add('hidden');
+  const current = document.getElementById('currentPasswordInput').value;
+  const next = document.getElementById('newPasswordInput').value;
+  const confirm = document.getElementById('confirmNewPasswordInput').value;
+  if(!current || !next || !confirm){
+    errEl.textContent = 'Fill in all three fields.';
+    errEl.classList.remove('hidden');
+    return;
+  }
+  if(next !== confirm){
+    errEl.textContent = 'New password and confirmation do not match.';
+    errEl.classList.remove('hidden');
+    return;
+  }
+  btn.disabled = true;
+  try{
+    await _changePasswordRequest(current, next);
+    okEl.textContent = 'Password changed.';
+    okEl.classList.remove('hidden');
+    document.getElementById('currentPasswordInput').value = '';
+    document.getElementById('newPasswordInput').value = '';
+    document.getElementById('confirmNewPasswordInput').value = '';
+  }catch(e){
+    errEl.textContent = e.status === 401 ? 'Current password is incorrect.' : ('Could not change password: ' + e.message);
+    errEl.classList.remove('hidden');
+  }finally{
+    btn.disabled = false;
+  }
+};
+
+// --- Debrief History ---------------------------------------------------
+function formatDuration(sec){
+  sec = Math.max(0, Math.round(sec || 0));
+  const m = Math.floor(sec / 60), s = sec % 60;
+  return m > 0 ? `${m}m ${s}s` : `${s}s`;
+}
+
+window.openDebriefHistory = function(){
+  closeProfileMenu();
+  document.getElementById('debriefHistoryScreen').classList.remove('hidden');
+  document.getElementById('debriefHistoryScreen').scrollIntoView({ behavior: 'smooth' });
+  loadDebriefHistory();
+};
+
+window.closeDebriefHistory = function(){
+  document.getElementById('debriefHistoryScreen').classList.add('hidden');
+};
+
+async function loadDebriefHistory(){
+  const list = document.getElementById('debriefHistoryList');
+  list.innerHTML = '<p class="history-empty">Loading…</p>';
+  let sessions;
+  try{
+    sessions = await api('/sessions/mine');
+  }catch(e){
+    list.innerHTML = '';
+    const p = document.createElement('p');
+    p.className = 'history-empty';
+    p.textContent = 'Could not load your session history: ' + e.message;
+    list.appendChild(p);
+    return;
+  }
+  list.innerHTML = '';
+  if(!sessions.length){
+    const p = document.createElement('p');
+    p.className = 'history-empty';
+    p.textContent = 'No completed sessions yet. Finish a practice session to see its debrief here.';
+    list.appendChild(p);
+    return;
+  }
+  sessions.forEach(s => {
+    const row = document.createElement('div');
+    row.className = 'history-row';
+
+    const summary = document.createElement('div');
+    summary.className = 'history-summary';
+
+    const main = document.createElement('div');
+    main.className = 'history-main';
+    const personaSpan = document.createElement('span');
+    personaSpan.className = 'persona';
+    personaSpan.textContent = s.persona_name;
+    main.append(personaSpan, document.createTextNode(' — '));
+    const scenarioSpan = document.createElement('span');
+    scenarioSpan.className = 'scenario';
+    scenarioSpan.textContent = s.scenario_title;
+    main.appendChild(scenarioSpan);
+
+    const meta = document.createElement('div');
+    meta.className = 'history-meta';
+    const when = s.created_at ? new Date(s.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '';
+    meta.textContent = `${when} · ${formatDuration(s.duration_sec)}`;
+
+    summary.append(main, meta);
+
+    const detail = document.createElement('div');
+    detail.className = 'history-detail debrief-body hidden';
+    detail.textContent = s.debrief;
+
+    summary.onclick = () => detail.classList.toggle('hidden');
+    row.append(summary, detail);
+    list.appendChild(row);
+  });
+}
 
 function onAuthenticated(me){
   const avatarEl = document.getElementById('profileAvatar');

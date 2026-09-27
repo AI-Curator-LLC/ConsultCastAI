@@ -1,6 +1,7 @@
 """Session record schema and API request/response models."""
 
 import uuid
+from datetime import datetime
 from pydantic import BaseModel, Field
 
 
@@ -21,6 +22,16 @@ class ForgotPasswordRequest(BaseModel):
 class ResetPasswordRequest(BaseModel):
     token: str
     password: str
+
+
+class UpdateProfileRequest(BaseModel):
+    name: str | None = None
+    company: str | None = None
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
 
 
 class ConversationTurn(BaseModel):
@@ -45,6 +56,12 @@ class SessionRecord(BaseModel):
     duration_sec: int = 0
     debrief: str | None = None
     status: str = "active"  # "active" | "completed"
+    # Set once, at construction, never touched again. Existing sessions saved
+    # before this field existed get "now" the first time they're re-loaded
+    # (the default_factory firing on that load, not their real start time) —
+    # a one-time quirk of JSON storage having no real migration, not
+    # something new sessions from here on run into.
+    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
 
 
 class StartSessionRequest(BaseModel):

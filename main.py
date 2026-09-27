@@ -38,6 +38,8 @@ from models import (
     EndSessionResponse,
     AvatarTokenRequest,
     AvatarTokenResponse,
+    UpdateProfileRequest,
+    ChangePasswordRequest,
 )
 from prompts import build_system_prompt, build_debrief_prompt, build_opener_prompt
 
@@ -201,13 +203,39 @@ def resend_verification(background_tasks: BackgroundTasks, user: auth.AuthUser =
 @app.get("/auth/me")
 def me(user: auth.AuthUser = Depends(auth.verify_user)):
     """Lets the frontend ask "am I logged in?" on load. In local dev-bypass
-    mode this succeeds as the dev user, so the login screen is skipped."""
+    mode this succeeds as the dev user, so the login screen is skipped.
+    Also backs the Profile panel (created_at/name/company), not just the
+    login check, so it carries those even though the name suggests less."""
     if auth.is_dev_bypass():
-        return {"email": user.email, "email_verified": True, "dev_bypass": True}
+        return {
+            "email": user.email, "email_verified": True, "dev_bypass": True,
+            "created_at": None, "name": None, "company": None,
+        }
     account = users.get_user_by_id(user.rep_id)
     if not account:
         raise HTTPException(401, "Account no longer exists, please log in again")
-    return {"email": account.email, "email_verified": account.email_verified, "dev_bypass": False}
+    return {
+        "email": account.email, "email_verified": account.email_verified, "dev_bypass": False,
+        "created_at": account.created_at, "name": account.name, "company": account.company,
+    }
+
+
+@app.patch("/auth/profile")
+def update_profile(req: UpdateProfileRequest, user: auth.AuthUser = Depends(auth.verify_user)):
+    users.update_profile(user.rep_id, req.name, req.company)
+    return {"message": "Profile updated"}
+
+
+@app.post("/auth/change-password")
+def change_password(req: ChangePasswordRequest, user: auth.AuthUser = Depends(auth.verify_user)):
+    account = users.get_user_by_id(user.rep_id)
+    if not account or not users.verify_password(req.current_password, account.password_hash):
+        raise HTTPException(401, "Current password is incorrect")
+    problem = users.password_problem(req.new_password)
+    if problem:
+        raise HTTPException(400, problem)
+    users.update_password_hash(user.rep_id, users.hash_password(req.new_password))
+    return {"message": "Password changed"}
 
 
 @app.get("/personas")
@@ -361,6 +389,27 @@ def end_session(session_id: str, user: auth.AuthUser = Depends(auth.verify_user)
     store.save(session)
 
     return EndSessionResponse(session_id=session.id, debrief=debrief, duration_sec=duration_sec)
+
+
+@app.get("/sessions/mine")
+def list_my_sessions(user: auth.AuthUser = Depends(auth.verify_user)):
+    """Debrief History: every completed session belonging to the calling
+    user, newest first. Filtered server-side by rep_id, so this can never
+    return anyone else's sessions regardless of what the client asks for."""
+    sessions = store.list_for_rep(user.rep_id)
+    completed = [s for s in sessions if s.status == "completed" and s.debrief]
+    completed.sort(key=lambda s: s.created_at, reverse=True)
+    return [
+        {
+            "id": s.id,
+            "persona_name": s.persona_name,
+            "scenario_title": s.scenario_title,
+            "created_at": s.created_at,
+            "duration_sec": s.duration_sec,
+            "debrief": s.debrief,
+        }
+        for s in completed
+    ]
 
 
 @app.post("/avatar/session-token", response_model=AvatarTokenResponse)
