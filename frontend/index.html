@@ -275,14 +275,24 @@
 
 
   .control-bar{display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-bottom:12px;}
-  .ctl{display:inline-flex; flex-direction:column; align-items:center; gap:4px; min-width:74px; padding:9px 12px;
+  .ctl{display:inline-flex; flex-direction:column; align-items:center; gap:6px; min-width:120px; padding:12px 24px;
     background:var(--bg-panel-2); border:1px solid var(--border); color:var(--text); border-radius:12px; cursor:pointer;
-    font-family:inherit; font-size:11px; font-weight:500;}
+    font-family:inherit; font-size:12px; font-weight:600; transition:filter .15s;}
   .ctl svg{width:20px; height:20px;}
   .ctl:hover:not(:disabled){border-color:var(--border-bright);}
   .ctl:disabled{opacity:0.4; cursor:not-allowed;}
-  .ctl.off{color:var(--danger); border-color:rgba(255,79,109,0.4);}
   .ctl.active{border-color:var(--blue); color:var(--blue-glow); box-shadow:0 0 0 1px var(--blue) inset;}
+  /* Mute / Stop Video: same gradient as the primary Send button. */
+  .ctl.ctl-gradient{background:linear-gradient(135deg, var(--blue), var(--purple)); color:#050611; border:none;}
+  .ctl.ctl-gradient:hover:not(:disabled){filter:brightness(1.1);}
+  /* Muted is a distinct "off" state, not just the gradient's normal look —
+     otherwise there's no visual difference between muted and unmuted. */
+  .ctl.ctl-gradient.off{background:var(--danger); color:#fff;}
+  /* Stop Session: amber, deliberately not red — End Session (red) is the
+     normal "finish and get a debrief" action, this one abandons the
+     session with no debrief, a different kind of consequential. */
+  .ctl.ctl-warn{background:var(--warn); color:#050611; border:none;}
+  .ctl.ctl-warn:hover:not(:disabled){filter:brightness(1.1);}
   .end-btn{margin-left:auto; background:linear-gradient(135deg, #ff5b7a, #ff3d63); color:#fff; border:none; border-radius:12px;
     padding:14px 22px; font-family:inherit; font-size:14px; font-weight:700; cursor:pointer; box-shadow:0 0 22px rgba(255,79,109,0.3);}
   .end-btn:disabled{opacity:0.5; cursor:not-allowed;}
@@ -592,15 +602,15 @@
            mode can be picked before pressing Start. The session-only buttons
            stay disabled/hidden until a session exists (setComposerEnabled). -->
       <div class="control-bar" id="controlBar">
-        <button class="ctl" id="muteBtn" onclick="toggleMute()" disabled title="Turn the auto-mic off or on">
+        <button class="ctl ctl-gradient" id="muteBtn" onclick="toggleMute()" disabled title="Turn the auto-mic off or on">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
           <span id="muteLabel">Mute</span>
         </button>
-        <button class="ctl" id="videoBtn" onclick="toggleVideo()" disabled title="Your camera preview (never recorded or sent anywhere)">
+        <button class="ctl ctl-gradient" id="videoBtn" onclick="toggleVideo()" disabled title="Your camera preview (never recorded or sent anywhere)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3z"/></svg>
           <span id="videoLabel">Start Video</span>
         </button>
-        <button class="ctl hidden" id="restartBtn" onclick="restartSession()" title="Ends the session without generating a debrief">
+        <button class="ctl ctl-warn hidden" id="restartBtn" onclick="restartSession()" title="Ends the session without generating a debrief">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="14" height="14" rx="3"/></svg>
           <span>Stop Session</span>
         </button>
