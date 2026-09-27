@@ -590,7 +590,21 @@
           <div class="info-tile"><div class="k">Focus Area</div><div class="v" id="tileFocus">—</div></div>
           <div class="info-tile"><div class="k">Difficulty</div><div class="v"><span class="diff-dot" id="tileDiffDot"></span><span id="tileDifficulty">—</span></div></div>
         </div>
-        <div class="side-section" id="overviewBlock" style="margin-top:0;">
+      </div>
+
+      <!-- Deliberately NOT nested inside #sessionBlock/#sessionDetails: this
+           has to stay usable before Start is pressed too (clicking a row
+           pre-selects the scenario), it just needs to render visually under
+           the info tiles once a session is active. Its own hidden/shown
+           state is entirely driven by renderObjections(), independent of
+           session state. -->
+      <div class="side-section hidden" id="objectionsSection">
+        <div class="side-label">Common objections</div>
+        <div class="objection-list" id="objectionList"></div>
+      </div>
+
+      <div id="sessionDetails" class="hidden">
+        <div class="side-section" id="overviewBlock">
           <div class="side-label">Scenario overview</div>
           <p class="overview" id="pContext"></p>
           <div class="persona-more hidden" id="personaMore">
@@ -603,11 +617,6 @@
           <div class="side-label">Key behavior traits</div>
           <div class="chip-row" id="pTraitTags" style="margin-top:0;"></div>
         </div>
-      </div>
-
-      <div class="side-section hidden" id="objectionsSection">
-        <div class="side-label">Common objections</div>
-        <div class="objection-list" id="objectionList"></div>
       </div>
 
       <button class="btn block" id="startBtn" disabled onclick="startSession()" style="margin-top:16px;">Start practice session</button>
@@ -1393,6 +1402,7 @@ window.startSession = async function(){
 
     document.getElementById('setupBlock').classList.add('hidden');
     document.getElementById('sessionBlock').classList.remove('hidden');
+    document.getElementById('sessionDetails').classList.remove('hidden');
     renderPersonaHead(currentPersona);
     setPersonaPhoto(currentPersona);
     document.getElementById('tileIndustry').textContent = industryLabel(currentPersona.industry);
@@ -1954,6 +1964,7 @@ window.resetAll = function(){
   document.getElementById('scenarioSelect').disabled = true;
   document.getElementById('setupBlock').classList.remove('hidden');
   document.getElementById('sessionBlock').classList.add('hidden');
+  document.getElementById('sessionDetails').classList.add('hidden');
   renderPersonaHead(null);
   setPersonaPhoto(null);
   setLiveChrome(false);
