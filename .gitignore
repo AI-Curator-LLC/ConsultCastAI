@@ -1,5 +1,6 @@
-# Local session storage (default CONSULTCASTAI_LOCAL_STORE=1 mode)
+# Local session/usage storage (default CONSULTCASTAI_LOCAL_STORE=1 mode)
 sessions_local.json
+usage_local.json
 
 # Local user accounts (default CONSULTCASTAI_LOCAL_USERS=1 mode), contains
 # password hashes, never commit

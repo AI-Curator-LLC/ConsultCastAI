@@ -77,6 +77,15 @@ class User:
     # rows default to False; existing/admin rows are flipped to True by
     # the migration in _ensure_schema below.
     approved: bool = False
+    # Billing: real recurring Stripe subscriptions (see require_active_plan
+    # in auth.py). plan_tier is a display/bookkeeping label ("pro", later
+    # "team"); subscription_status + current_period_end are what actually
+    # gate access. All None until the Stripe webhook sets them.
+    plan_tier: str | None = None
+    subscription_status: str | None = None  # "active" | "canceled" | "past_due"
+    current_period_end: str | None = None   # ISO-8601 UTC — access valid through this, even after cancellation
+    stripe_customer_id: str | None = None
+    stripe_subscription_id: str | None = None
 
 
 # --- passwords -------------------------------------------------------------
@@ -169,7 +178,12 @@ CREATE TABLE IF NOT EXISTS users (
     reset_token_expires TEXT,
     name TEXT,
     company TEXT,
-    approved INTEGER NOT NULL DEFAULT 0
+    approved INTEGER NOT NULL DEFAULT 0,
+    plan_tier TEXT,
+    subscription_status TEXT,
+    current_period_end TEXT,
+    stripe_customer_id TEXT,
+    stripe_subscription_id TEXT
 )
 """
 
@@ -187,7 +201,12 @@ CREATE TABLE IF NOT EXISTS users (
     reset_token_expires TEXT,
     name TEXT,
     company TEXT,
-    approved BOOLEAN NOT NULL DEFAULT FALSE
+    approved BOOLEAN NOT NULL DEFAULT FALSE,
+    plan_tier TEXT,
+    subscription_status TEXT,
+    current_period_end TIMESTAMPTZ,
+    stripe_customer_id TEXT,
+    stripe_subscription_id TEXT
 )
 """
 
@@ -202,6 +221,11 @@ _ADDED_COLUMNS = [
     ("name", "TEXT"),
     ("company", "TEXT"),
     ("approved", "BOOLEAN NOT NULL DEFAULT FALSE"),  # modern SQLite (3.23+) and Postgres both accept TRUE/FALSE literals
+    ("plan_tier", "TEXT"),
+    ("subscription_status", "TEXT"),
+    ("current_period_end", "TEXT"),
+    ("stripe_customer_id", "TEXT"),
+    ("stripe_subscription_id", "TEXT"),
 ]
 
 _schema_ready = False
@@ -305,6 +329,11 @@ def _row_to_user(row) -> User | None:
         name=row["name"],
         company=row["company"],
         approved=bool(row["approved"]),
+        plan_tier=row["plan_tier"],
+        subscription_status=row["subscription_status"],
+        current_period_end=row["current_period_end"],
+        stripe_customer_id=row["stripe_customer_id"],
+        stripe_subscription_id=row["stripe_subscription_id"],
     )
 
 
@@ -468,3 +497,56 @@ def list_pending() -> list[User]:
     whoever's been waiting longest shows at the top)."""
     rows = _run("SELECT * FROM users WHERE approved = ? ORDER BY created_at ASC", (False,), fetch_all=True)
     return [_row_to_user(r) for r in rows]
+
+
+# --- billing (Stripe subscriptions) ---------------------------------------
+# Real recurring billing: renews automatically until canceled through
+# Stripe's own Customer Portal (see /billing/portal-session in main.py).
+# Every function here is called only from main.py's signature-verified
+# /billing/webhook — never from a route a browser can hit directly, there's
+# no "trust me, I'm subscribed" path into any of this.
+
+def set_subscription(user_id: str, stripe_customer_id: str, stripe_subscription_id: str, plan_tier: str, status: str) -> None:
+    """checkout.session.completed: the initial subscription was just created."""
+    _run(
+        "UPDATE users SET stripe_customer_id = ?, stripe_subscription_id = ?, plan_tier = ?, subscription_status = ? WHERE id = ?",
+        (stripe_customer_id, stripe_subscription_id, plan_tier, status, user_id),
+    )
+
+
+def update_period_end(stripe_subscription_id: str, period_end: datetime) -> None:
+    """invoice.payment_succeeded: a renewal (or the initial invoice) went
+    through. Also sets status back to "active" — the normal way a
+    previously past_due subscription recovers is a retried invoice
+    succeeding, and Stripe fires this same event for that."""
+    _run(
+        "UPDATE users SET current_period_end = ?, subscription_status = ? WHERE stripe_subscription_id = ?",
+        (period_end.isoformat(), "active", stripe_subscription_id),
+    )
+
+
+def set_subscription_status(stripe_subscription_id: str, status: str) -> None:
+    """customer.subscription.deleted (-> "canceled") or invoice.payment_failed
+    (-> "past_due"). Looked up by subscription id, not user id — these
+    webhook events don't carry client_reference_id, only the subscription/
+    customer that already exists from checkout.session.completed."""
+    _run("UPDATE users SET subscription_status = ? WHERE stripe_subscription_id = ?", (status, stripe_subscription_id))
+
+
+def get_user_by_stripe_subscription_id(stripe_subscription_id: str) -> User | None:
+    return _row_to_user(_run("SELECT * FROM users WHERE stripe_subscription_id = ?", (stripe_subscription_id,), fetch_one=True))
+
+
+def subscription_active(user: User) -> bool:
+    """True if this account has a currently-active subscription. Canceling
+    doesn't flip this immediately — customer.subscription.deleted (status
+    -> "canceled") only fires once the already-paid-for period actually
+    ends, so current_period_end naturally covers "access continues through
+    what they already paid for" without this needing to know why access
+    might still be valid."""
+    if user.subscription_status != "active":
+        return False
+    if not user.current_period_end:
+        return True
+    end = _parse_utc(user.current_period_end)
+    return bool(end and end >= datetime.now(timezone.utc))

@@ -153,6 +153,55 @@ public, the reset cooldown is only a per-account email limit, not
 brute-force protection), and a way to deny/reject a pending request rather
 than just leaving it pending or deleting the row directly.
 
+## Billing (Stripe subscriptions)
+
+Real recurring billing, not a fixed-term one-time charge: ConsultCastAI Pro
+is $129/month or $1,316/year, renews automatically until canceled, MRR/ARR
+are real numbers. Only Pro is built — Team (multiple seats pooling one
+subscription's usage limit) is a real added data model, deliberately
+deferred, see the phasing note in `main.py`.
+
+Flow: `POST /billing/create-checkout-session` (any signed-in account, even
+a still-pending one — subscribing is one of the two ways an account becomes
+approved, alongside manual admin approval) opens a Stripe-hosted Checkout
+Session in `mode="subscription"` and returns its `checkout_url` to redirect
+the browser to. Stripe calls `POST /billing/webhook` server-to-server,
+verified by signature (never trust an unverified body), handling the full
+subscription lifecycle: `checkout.session.completed` (created, approves the
+account), `invoice.payment_succeeded` (renewed — also how a `past_due`
+subscription recovers), `customer.subscription.deleted` (canceled, once the
+already-paid-for period actually ends, not immediately), and
+`invoice.payment_failed` (`past_due`; Stripe's own smart retries handle
+dunning, no custom retry code here). `auth.require_active_plan` (stacked on
+`require_approved`) checks `subscription_status == "active"` and
+`current_period_end` plus a 20-session/month cap on `POST /sessions`
+specifically — the one action that costs money per use; continuing an
+already-started session doesn't check this again. Admins bypass entirely,
+same convention as `require_owner`'s admin bypass elsewhere in `auth.py` —
+otherwise the account that bootstrapped the approval system would itself
+have no subscription and be locked out by its own gate.
+
+Cancellation is self-service through Stripe's own Customer Portal
+(`POST /billing/portal-session` -> redirect to `portal_url`), not a custom
+in-app flow — the portal already handles proration and other edge cases
+correctly. The Profile menu's "Manage subscription" link is the only
+frontend piece this needs.
+
+**Compliance**: the plan-selection screen discloses that it renews
+automatically and how to cancel (the actual substance of "click to cancel"
+rules, not boilerplate) — see the pending-approval screen's copy.
+
+Required env vars (all `sync: false` in `render.yaml`, fail closed if
+unset — nobody gets free access from a missing key): `STRIPE_SECRET_KEY`,
+`STRIPE_WEBHOOK_SECRET` (from adding an endpoint in the Stripe dashboard for
+`{backend}/billing/webhook`, listening for the four events above),
+`STRIPE_PRICE_PRO_MONTHLY`, `STRIPE_PRICE_PRO_ANNUAL` (the Price IDs from
+the ConsultCastAI Pro product's two Prices, already created in Stripe).
+
+Not built yet: Team tier, proration on plan changes (the Customer Portal
+handles the basic case), custom dunning logic beyond Stripe's built-in
+retries — all deliberately deferred, not oversights.
+
 ## Voice, current state
 
 The frontend uses the browser's built-in Web Speech API (`SpeechRecognition`

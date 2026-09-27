@@ -37,6 +37,7 @@ services:
       - key: RESEND_API_KEY  # verification emails; unset just skips sending, it never blocks signup
         sync: false
       - key: CONSULTCASTAI_ALLOWED_ORIGINS  # comma-separated, exact origins, no trailing slash. Must list EVERY address the frontend is served from (the onrender.com URL and the custom domain), or the browser blocks its API calls
+        sync: false
       # CRITICAL, read before deploying: the access-approval system (users.py)
       # gates every functional endpoint on an "approved" flag that defaults
       # to false, including on accounts that already existed before this
@@ -48,6 +49,24 @@ services:
       # where "someone signed up" notification emails go.
       - key: CONSULTCASTAI_ADMIN_EMAIL
         sync: false
+      # Stripe: real recurring subscriptions (Pro: $129/mo or $1,316/yr),
+      # renews automatically until canceled via Stripe's own Customer Portal.
+      # Create the ConsultCastAI Pro product with both Prices in the Stripe
+      # dashboard first, then set these from Stripe's own dashboard values.
+      # STRIPE_WEBHOOK_SECRET comes from adding an endpoint in Stripe for
+      # https://consultcastai-api.onrender.com/billing/webhook listening for
+      # checkout.session.completed, invoice.payment_succeeded,
+      # customer.subscription.deleted, and invoice.payment_failed. Billing
+      # endpoints fail closed (not open) if any of these are unset — nobody
+      # gets free access from a missing key. Team's two Price IDs follow the
+      # same pattern once Team itself is built, deliberately not wired in yet.
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: STRIPE_PRICE_PRO_MONTHLY
+        sync: false
+      - key: STRIPE_PRICE_PRO_ANNUAL
         sync: false
 
       # Fixed for this deploy shape (local storage on the disk above, real

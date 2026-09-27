@@ -12,8 +12,10 @@ storage required by default, see README.md for the local -> production path.
 import os
 import secrets
 import time
+from datetime import datetime, timezone
 
-from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks
+import stripe
+from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 
@@ -40,6 +42,7 @@ from models import (
     AvatarTokenResponse,
     UpdateProfileRequest,
     ChangePasswordRequest,
+    CheckoutRequest,
 )
 from prompts import build_system_prompt, build_debrief_prompt, build_opener_prompt
 
@@ -70,7 +73,7 @@ print(
 # Bump this string any time prompts.py changes and you need
 # to confirm a restart actually picked up the new files, rather than
 # guessing. Check the uvicorn startup log for this exact line.
-print("[consultcastai] BUILD MARKER: assessment-removed-v1")
+print("[consultcastai] BUILD MARKER: stripe-billing-v1")
 
 # Never prints the key itself, just whether one's configured and which
 # sender it'll use, so "is verification email even set up?" is answerable
@@ -79,6 +82,22 @@ print(
     f"[consultcastai] Email: RESEND_API_KEY {'set' if os.environ.get('RESEND_API_KEY', '').strip() else 'NOT SET (verification/reset emails are skipped, links are logged instead)'}; "
     f"from={os.environ.get('CONSULTCASTAI_EMAIL_FROM', 'ConsultCastAI <onboarding@resend.dev> (default: only delivers to the Resend account owner)')}"
 )
+
+# Set at import time so a request never silently no-ops with a blank key; if
+# it's unset, stripe.api_key ends up "" and Stripe's own client raises a
+# clear auth error the first time something actually calls it, rather than
+# this module crashing at startup the way `os.environ["STRIPE_SECRET_KEY"]`
+# (a hard KeyError) would for every deploy that hasn't set up billing yet.
+stripe.api_key = os.environ.get("STRIPE_SECRET_KEY", "").strip()
+print(f"[consultcastai] Stripe: {'configured' if stripe.api_key else 'NOT SET (billing endpoints will fail closed)'}")
+
+# Pro only — Team is deliberately not built yet (see the phasing note in
+# the billing spec: it needs a real pooled/seat-based data model, not just
+# two more entries in this dict).
+_STRIPE_PLAN_PRICE_IDS = {
+    "pro_monthly": os.environ.get("STRIPE_PRICE_PRO_MONTHLY", "").strip(),
+    "pro_annual": os.environ.get("STRIPE_PRICE_PRO_ANNUAL", "").strip(),
+}
 
 app.add_middleware(
     CORSMiddleware,
@@ -300,8 +319,141 @@ def list_personas():
     return out
 
 
+# --- Billing (Stripe subscriptions) -----------------------------------
+# Real recurring billing (mode="subscription"), not a one-time payment:
+# renews automatically until canceled through Stripe's own Customer Portal.
+# Access is valid through current_period_end even after cancellation (see
+# auth.require_active_plan) — standard SaaS behavior, no partial refund for
+# time remaining.
+
+@app.post("/billing/create-checkout-session")
+def create_checkout_session(req: CheckoutRequest, user: auth.AuthUser = Depends(auth.verify_user)):
+    """Deliberately Depends(auth.verify_user), not require_approved: a
+    pending (unapproved, unsubscribed) account has to be able to reach
+    checkout in the first place — subscribing is one of the two ways an
+    account becomes approved (the other being manual admin approval), see
+    the webhook below. Gating this on require_approved would make that
+    path unreachable."""
+    if not stripe.api_key:
+        raise HTTPException(500, "Billing is not configured")
+    price_id = _STRIPE_PLAN_PRICE_IDS.get(req.plan)
+    if not price_id:
+        # Also catches a real plan name whose specific STRIPE_PRICE_* env var
+        # just isn't set yet, not only a genuinely unrecognized plan string —
+        # both look identical from here, and both should refuse rather than
+        # call Stripe with an empty price.
+        raise HTTPException(400, "Unknown plan")
+
+    try:
+        session = stripe.checkout.Session.create(
+            mode="subscription",  # real recurring billing, not a one-time payment
+            line_items=[{"price": price_id, "quantity": 1}],
+            success_url=f"{_frontend_url()}/?payment=success",
+            cancel_url=f"{_frontend_url()}/?payment=cancelled",
+            client_reference_id=user.rep_id,  # ties the subscription back to the account in the webhook
+            metadata={"plan": req.plan},
+        )
+    except stripe.error.StripeError as exc:
+        print(f"[consultcastai] checkout session creation failed for {user.email}: {type(exc).__name__}: {exc}")
+        raise HTTPException(status_code=502, detail="Could not start checkout, please try again")
+
+    return {"checkout_url": session.url}
+
+
+@app.post("/billing/portal-session")
+def create_portal_session(user: auth.AuthUser = Depends(auth.verify_user)):
+    """Stripe's own hosted Customer Portal: cancel, update the payment
+    method, view invoices. Deliberately NOT a custom in-app cancel flow —
+    the portal already handles proration and other edge cases correctly."""
+    if not stripe.api_key:
+        raise HTTPException(500, "Billing is not configured")
+    account = users.get_user_by_id(user.rep_id)
+    if not account or not account.stripe_customer_id:
+        raise HTTPException(400, "No billing account on file yet — subscribe first")
+
+    try:
+        portal = stripe.billing_portal.Session.create(
+            customer=account.stripe_customer_id,
+            return_url=_frontend_url(),
+        )
+    except stripe.error.StripeError as exc:
+        print(f"[consultcastai] portal session creation failed for {user.email}: {type(exc).__name__}: {exc}")
+        raise HTTPException(status_code=502, detail="Could not open the billing portal, please try again")
+
+    return {"portal_url": portal.url}
+
+
+@app.post("/billing/webhook")
+async def stripe_webhook(request: Request):
+    """No AuthUser dependency — Stripe calls this directly, proven
+    authentic by the signature below, never by a bearer token. NEVER trust
+    an unverified body: anyone could otherwise POST a fake "subscription
+    active" event and grant themselves free access.
+
+    Handles the subscription lifecycle, not just the initial purchase:
+    checkout.session.completed (created), invoice.payment_succeeded
+    (renewed — including recovering from past_due), customer.subscription.deleted
+    (canceled, once the paid period actually ends, not immediately), and
+    invoice.payment_failed (past_due). Dunning/retries themselves are
+    Stripe's built-in smart retries, no custom code needed for that part."""
+    payload = await request.body()
+    sig_header = request.headers.get("stripe-signature")
+    webhook_secret = os.environ.get("STRIPE_WEBHOOK_SECRET", "").strip()
+    if not webhook_secret:
+        print("[consultcastai] STRIPE_WEBHOOK_SECRET is not set, refusing the webhook (fail closed, not open)")
+        raise HTTPException(status_code=500, detail="Billing is not configured")
+    try:
+        event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
+    except (ValueError, stripe.error.SignatureVerificationError) as exc:
+        print(f"[consultcastai] webhook signature check failed: {type(exc).__name__}: {exc}")
+        raise HTTPException(status_code=400, detail="Invalid webhook signature")
+
+    event_type = event["type"]
+    obj = event["data"]["object"]
+
+    # A malformed/unexpected payload should never 500 back to Stripe (that
+    # just triggers pointless retries) or silently grant access with
+    # made-up data — every branch below logs and returns 200 instead.
+    if event_type == "checkout.session.completed":
+        user_id = obj.get("client_reference_id")
+        plan = (obj.get("metadata") or {}).get("plan")
+        subscription_id = obj.get("subscription")
+        if not user_id or not plan or not subscription_id:
+            print(f"[consultcastai] webhook: checkout.session.completed missing user_id/plan/subscription (plan={plan!r}), ignoring")
+            return {"received": True}
+        users.set_subscription(
+            user_id,
+            stripe_customer_id=obj.get("customer"),
+            stripe_subscription_id=subscription_id,
+            plan_tier=plan.split("_")[0],  # "pro" from "pro_monthly"/"pro_annual"
+            status="active",
+        )
+        users.set_approved(user_id, True)  # subscribing satisfies the approval gate too
+
+    elif event_type == "invoice.payment_succeeded":
+        subscription_id = obj.get("subscription")
+        lines = (obj.get("lines") or {}).get("data") or []
+        period_end_ts = lines[0].get("period", {}).get("end") if lines else None
+        if not subscription_id or not period_end_ts:
+            print(f"[consultcastai] webhook: invoice.payment_succeeded missing subscription/period end, ignoring")
+            return {"received": True}
+        users.update_period_end(subscription_id, datetime.fromtimestamp(period_end_ts, tz=timezone.utc))
+
+    elif event_type == "customer.subscription.deleted":
+        subscription_id = obj.get("id")
+        if subscription_id:
+            users.set_subscription_status(subscription_id, "canceled")
+
+    elif event_type == "invoice.payment_failed":
+        subscription_id = obj.get("subscription")
+        if subscription_id:
+            users.set_subscription_status(subscription_id, "past_due")
+
+    return {"received": True}
+
+
 @app.post("/sessions", response_model=SessionRecord)
-def start_session(req: StartSessionRequest, user: auth.AuthUser = Depends(auth.require_approved)):
+def start_session(req: StartSessionRequest, user: auth.AuthUser = Depends(auth.require_active_plan)):
     persona = content.get_persona(req.persona_id)
     scenario = content.get_scenario(req.scenario_id)
     if not persona or not scenario:
@@ -342,6 +494,11 @@ def start_session(req: StartSessionRequest, user: auth.AuthUser = Depends(auth.r
     store.save(session)
     _coaching_state[session.id] = coaching.CoachingState()
     _start_time[session.id] = time.time()
+    # Charged the instant a session actually exists, not speculatively before
+    # (a request that 404s/500s above never touched this) — see
+    # auth.require_active_plan for the cap this counts against.
+    if not auth.is_dev_bypass() and not user.is_admin:
+        store.increment_session_count(user.rep_id, datetime.now(timezone.utc).strftime('%Y-%m'))
 
     return session
 

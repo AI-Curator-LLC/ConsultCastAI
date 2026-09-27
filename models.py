@@ -34,6 +34,10 @@ class ChangePasswordRequest(BaseModel):
     new_password: str
 
 
+class CheckoutRequest(BaseModel):
+    plan: str  # "pro_monthly" | "pro_annual" — Team is deliberately not built yet, see the phasing note in billing setup
+
+
 class ConversationTurn(BaseModel):
     role: str  # "user" (consultant) | "assistant" (persona)
     content: str

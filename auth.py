@@ -24,6 +24,7 @@ auth mechanisms again later only touches verify_user's body.
 
 import os
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from fastapi import Depends, Header, HTTPException
 
@@ -111,4 +112,42 @@ def require_approved(user: AuthUser = Depends(verify_user)) -> AuthUser:
 def require_admin(user: AuthUser = Depends(verify_user)) -> AuthUser:
     if not user.is_admin:
         raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
+
+# Pro tier's monthly session cap (see the Stripe integration spec: Team,
+# with its own pooled/per-seat shape, is deliberately not built yet).
+PRO_MONTHLY_SESSION_CAP = 20
+
+
+def require_active_plan(user: AuthUser = Depends(require_approved)) -> AuthUser:
+    """Stacked on top of require_approved (chained via Depends above, so a
+    still-pending account gets that 403 first) for the one action that
+    actually costs money per use: starting a new practice session. Not
+    applied anywhere else — continuing an already-started session (/turn,
+    /end) doesn't cost anything further per the pricing model.
+
+    Admins bypass entirely (no subscription to check), matching
+    require_owner's existing admin-bypass convention above — otherwise the
+    moment this ships, every admin account (including whichever one
+    bootstrapped the approval system) would itself fail this check, having
+    no subscription at all, the same class of self-lockout mistake flagged
+    on the last two features. A manually-approved-but-unsubscribed regular
+    account is NOT exempted, though: approval and having an active
+    subscription are two separate gates now (subscribing satisfies both,
+    per the Stripe webhook; manual admin approval only satisfies
+    require_approved)."""
+    if _dev_bypass_enabled() or user.is_admin:
+        return user
+    account = users.get_user_by_id(user.rep_id)
+    if not account or not users.subscription_active(account):
+        raise HTTPException(status_code=402, detail="Your subscription isn't active. Please subscribe or update your billing.")
+
+    month_key = datetime.now(timezone.utc).strftime("%Y-%m")
+    usage = store.get_usage(user.rep_id, month_key)
+    if usage.session_count >= PRO_MONTHLY_SESSION_CAP:
+        raise HTTPException(
+            status_code=402,
+            detail=f"You've used your {PRO_MONTHLY_SESSION_CAP} sessions this month. Resets next month.",
+        )
     return user

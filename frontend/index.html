@@ -574,6 +574,7 @@
           <div class="who" id="profileEmail"></div>
           <button role="menuitem" onclick="openProfile()">Profile</button>
           <button role="menuitem" onclick="openDebriefHistory()">Debrief History</button>
+          <button role="menuitem" onclick="openBillingPortal()">Manage subscription</button>
           <button role="menuitem" class="hidden" id="pendingRequestsMenuBtn" onclick="openPendingRequests()">Pending Requests</button>
           <button id="logoutBtn" class="danger" role="menuitem" onclick="logout()">Log out</button>
         </div>
@@ -928,7 +929,17 @@
       <span class="brand-text">ConsultCast<span class="ai">AI</span></span>
     </div>
     <h2>Request pending</h2>
-    <p class="auth-note" style="margin-bottom:22px;">Your access request is pending approval. You'll be able to use ConsultCastAI as soon as an admin approves your account — no action needed from you in the meantime.</p>
+    <p class="auth-note" id="pendingScreenNote">Your access request is pending approval. You'll be able to use ConsultCastAI as soon as an admin approves your account — no action needed from you in the meantime.</p>
+    <p class="auth-note">Or skip the wait: subscribe and you're in immediately.</p>
+    <p class="auth-error hidden" id="checkoutError"></p>
+    <button class="btn block" id="checkoutBtnMonthly" style="margin-bottom:10px;" onclick="startCheckout('pro_monthly')">ConsultCastAI Pro — $129/month</button>
+    <button class="btn block" id="checkoutBtnAnnual" style="margin-bottom:10px;" onclick="startCheckout('pro_annual')">ConsultCastAI Pro — $1,316/year</button>
+    <!-- FTC "click to cancel" disclosure: substance, not boilerplate — this
+         is real auto-renewing billing, so how it renews and how to stop it
+         has to be stated plainly right next to the buttons that start it. -->
+    <p style="font-size:11.5px; color:var(--text-faint); line-height:1.5; margin:0 0 22px;">
+      Billed automatically at the interval selected, renews until canceled. Cancel anytime from Profile → Manage subscription — access continues through the period you've already paid for.
+    </p>
     <button class="btn ghost block" onclick="logout()">Log out</button>
   </div>
 </div>
@@ -1638,6 +1649,37 @@ async function loadPendingRequests(){
   });
 }
 
+window.startCheckout = async function(plan){
+  const buttons = [document.getElementById('checkoutBtnMonthly'), document.getElementById('checkoutBtnAnnual')];
+  const errEl = document.getElementById('checkoutError');
+  errEl.classList.add('hidden');
+  buttons.forEach(b => b.disabled = true);
+  try{
+    const res = await api('/billing/create-checkout-session', {
+      method: 'POST',
+      body: JSON.stringify({ plan }),
+    });
+    location.href = res.checkout_url; // hands off to Stripe's own hosted checkout page — no card handling here at all
+  }catch(e){
+    errEl.textContent = 'Could not start checkout: ' + e.message;
+    errEl.classList.remove('hidden');
+    buttons.forEach(b => b.disabled = false);
+  }
+};
+
+// Stripe's own hosted Customer Portal: cancel, update payment method, view
+// invoices. Deliberately not a custom in-app cancel flow — the portal
+// already handles proration and other edge cases correctly.
+window.openBillingPortal = async function(){
+  closeProfileMenu();
+  try{
+    const res = await api('/billing/portal-session', { method: 'POST' });
+    location.href = res.portal_url;
+  }catch(e){
+    alert('Could not open the billing portal: ' + e.message);
+  }
+};
+
 function showPendingScreen(){
   document.getElementById('pendingScreen').classList.remove('hidden');
 }
@@ -1660,8 +1702,17 @@ function onAuthenticated(me){
   // app setup below matters until that clears.
   if(me.approved === false){
     showPendingScreen();
+    if(paymentJustSucceeded){
+      // The webhook that actually approves the account runs server-to-server
+      // and may not have landed yet by the time Stripe redirects back here —
+      // this isn't "your payment failed", just "give it a moment", so it
+      // gets its own note instead of the default pending message.
+      document.getElementById('pendingScreenNote').textContent =
+        "Payment received! Finalizing your access — this usually takes a few seconds. Refresh if it's still pending shortly.";
+    }
     return;
   }
+  paymentJustSucceeded = false;
   hidePendingScreen();
 
   if(flashBanner) return;
@@ -2538,8 +2589,22 @@ window.toggleVideo = async function(){
   else await startSelfCamera();
 };
 
+// Stripe redirects back here after Checkout with ?payment=success or
+// ?payment=cancelled (see success_url/cancel_url in /billing/create-checkout-session).
+// The webhook that actually grants access runs server-to-server, not as
+// part of this redirect, so "success" here means "Stripe took the payment",
+// not "you're approved yet" — checkAuth() below picks up the real state.
+let paymentJustSucceeded = false;
+function handlePaymentParam(){
+  const p = new URLSearchParams(location.search).get('payment');
+  if(!p) return;
+  if(p === 'success') paymentJustSucceeded = true;
+  stripQueryParam('payment');
+}
+
 handleVerifiedParam();
 handleResetParam();
+handlePaymentParam();
 loadPersonas();
 checkAuth();
 </script>
