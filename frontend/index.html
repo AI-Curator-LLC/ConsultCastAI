@@ -312,6 +312,15 @@
   .end-btn{margin-left:auto; height:48px; padding:0 22px; background:linear-gradient(135deg, #ff5b7a, #ff3d63); color:#fff; border:none; border-radius:12px;
     display:inline-flex; align-items:center; justify-content:center; font-family:inherit; font-size:14px; font-weight:700; cursor:pointer; box-shadow:0 0 22px rgba(255,79,109,0.3);}
   .end-btn:disabled{opacity:0.5; cursor:not-allowed;}
+  /* One uniform size for all six control-bar/composer buttons (Mute, Stop
+     Video, Pause, Stop Session, End Session, Send) — color alone signals
+     routine vs. consequential now, not size. height:auto overrides .ctl's
+     and .end-btn's own fixed height:48px above (min-height alone can't win
+     against an explicit height), so min-height is what actually applies. */
+  .btn-uniform{
+    height:42px; padding:10px 18px; line-height:1;
+    font-size:14px; font-weight:600; border-radius:10px;
+  }
   .controls-row{display:flex; gap:10px; margin-bottom:10px; align-items:flex-end;}
   .controls-row .field{margin-bottom:0; flex:0 0 150px;}
   .browser-note{
@@ -323,11 +332,11 @@
   .composer{display:flex; gap:8px;}
   .composer input{
     flex:1; background:var(--bg-panel-2); border:1px solid var(--border); color:var(--text);
-    padding:13px 15px; border-radius:11px; font-size:14px; font-family:var(--font-body);
+    padding:13px 15px; border-radius:11px; font-size:14px; font-family:var(--font-body); height:42px; line-height:1;
   }
   .composer input:focus{outline:none; border-color:var(--border-bright);}
   .mic-btn{
-    width:48px; height:48px; border-radius:50%; border:1px solid var(--border);
+    width:42px; height:42px; border-radius:50%; border:1px solid var(--border);
     background:var(--bg-panel-2); color:var(--text); cursor:pointer; font-size:18px; flex:none;
   }
   .mic-btn.live{background:linear-gradient(135deg, var(--danger), var(--purple)); box-shadow:0 0 22px rgba(255,79,109,0.55); border:none;}
@@ -619,23 +628,23 @@
            mode can be picked before pressing Start. The session-only buttons
            stay disabled/hidden until a session exists (setComposerEnabled). -->
       <div class="control-bar" id="controlBar">
-        <button class="ctl ctl-gradient" id="muteBtn" onclick="toggleMute()" disabled title="Turn the auto-mic off or on">
+        <button class="ctl ctl-gradient btn-uniform" id="muteBtn" onclick="toggleMute()" disabled title="Turn the auto-mic off or on">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
           <span id="muteLabel">Mute</span>
         </button>
-        <button class="ctl ctl-gradient" id="videoBtn" onclick="toggleVideo()" disabled title="Your camera preview (never recorded or sent anywhere)">
+        <button class="ctl ctl-gradient btn-uniform" id="videoBtn" onclick="toggleVideo()" disabled title="Your camera preview (never recorded or sent anywhere)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3z"/></svg>
           <span id="videoLabel">Start Video</span>
         </button>
-        <button class="ctl ctl-cyan" id="pauseBtn" onclick="togglePause()" disabled title="Pause without ending the session (disconnects the live avatar so it doesn't keep costing minutes)">
+        <button class="ctl ctl-cyan btn-uniform" id="pauseBtn" onclick="togglePause()" disabled title="Pause without ending the session (disconnects the live avatar so it doesn't keep costing minutes)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" id="pauseIcon"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
           <span id="pauseLabel">Pause</span>
         </button>
-        <button class="ctl ctl-warn hidden" id="restartBtn" onclick="restartSession()" title="Ends the session without generating a debrief">
+        <button class="ctl ctl-warn btn-uniform hidden" id="restartBtn" onclick="restartSession()" title="Ends the session without generating a debrief">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="14" height="14" rx="3"/></svg>
           <span>Stop Session</span>
         </button>
-        <button class="end-btn hidden" id="endBtn" onclick="endSession()" title="End the session and get your debrief">End Session</button>
+        <button class="end-btn btn-uniform hidden" id="endBtn" onclick="endSession()" title="End the session and get your debrief">End Session</button>
       </div>
 
       <div id="centerActive" class="hidden" style="display:flex; flex-direction:column; flex:1;">
@@ -648,7 +657,7 @@
       <div class="composer">
         <button class="mic-btn" id="micBtn" onclick="toggleMic()" title="Start a session first" disabled>🎙</button>
         <input id="msgInput" placeholder="Start a session to send a message..." onkeydown="if(event.key==='Enter')sendTurn()" disabled />
-        <button class="btn" id="sendBtn" onclick="sendTurn()" disabled>Send</button>
+        <button class="btn btn-uniform" id="sendBtn" onclick="sendTurn()" disabled>Send</button>
       </div>
     </div>
 
