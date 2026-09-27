@@ -49,15 +49,35 @@
   .brand-text{font-family:var(--font-display); font-size:19px; font-weight:700; letter-spacing:0.2px;}
   .brand-text .ai{background:linear-gradient(135deg, var(--blue-glow), var(--purple-glow)); -webkit-background-clip:text; background-clip:text; color:transparent;}
 
-  .conn{display:flex; align-items:center; gap:8px;}
+  .conn{display:flex; align-items:center; gap:10px;}
+  /* Connection status pill. Neutral while connecting / not connected (JS
+     leaves off .ok), green once connected (JS adds .ok). */
   .badge{
-    font-family:var(--font-mono); font-size:10.5px; padding:5px 10px; border-radius:99px;
-    border:1px solid var(--border); color:var(--text-dim); letter-spacing:0.5px; text-transform:uppercase;
-    display:flex; align-items:center; gap:6px;
+    display:inline-flex; align-items:center; gap:6px; padding:6px 14px; border-radius:999px;
+    background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.12); color:var(--text-dim);
+    font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; white-space:nowrap;
   }
   .badge::before{content:''; width:6px; height:6px; border-radius:50%; background:var(--text-faint);}
-  .badge.ok{color:var(--good); border-color:rgba(51,230,165,0.35);}
-  .badge.ok::before{background:var(--good); box-shadow:0 0 8px var(--good);}
+  .badge.ok{background:rgba(51,230,165,0.12); border-color:rgba(51,230,165,0.3); color:var(--good);}
+  .badge.ok::before{background:var(--good); box-shadow:0 0 6px var(--good);}
+  /* Header action buttons: solid rounded pills instead of underlined links. */
+  .header-pill{
+    display:inline-flex; align-items:center; gap:6px; padding:8px 16px; border-radius:999px;
+    font-family:inherit; font-size:13px; font-weight:600; cursor:pointer; border:none;
+    text-decoration:none; white-space:nowrap;
+  }
+  .header-pill.secondary{background:rgba(255,255,255,0.06); color:var(--text);}
+  .header-pill.secondary:hover{background:rgba(255,255,255,0.1);}
+  /* Log out gets a subtle red tint: a more consequential action than the others. */
+  .header-pill.secondary.logout{background:rgba(255,79,109,0.1); color:#ff8ea1;}
+  .header-pill.secondary.logout:hover{background:rgba(255,79,109,0.18);}
+  /* Signed-in user: circle with their first initial; full email is the tooltip. */
+  .profile-avatar{
+    width:32px; height:32px; border-radius:50%; flex:none;
+    background:linear-gradient(135deg, var(--blue), var(--purple)); color:#050611;
+    display:flex; align-items:center; justify-content:center; font-weight:700; font-size:14px;
+    cursor:default; /* not clickable: there's no menu behind it, so no pointer cursor */
+  }
   .adv-toggle{
     font-family:var(--font-mono); font-size:10.5px; color:var(--text-faint); background:none; border:none;
     cursor:pointer; letter-spacing:0.5px; text-decoration:underline; text-underline-offset:3px;
@@ -283,7 +303,6 @@
   footer .fine{color:var(--text-faint); font-size:10.5px; font-family:var(--font-mono); letter-spacing:0.3px;}
 
   /* --- Login / signup + verification banner --- */
-  .user-email{font-family:var(--font-mono); font-size:10.5px; color:var(--text-dim);}
   .verify-banner{
     display:flex; align-items:center; justify-content:space-between; gap:12px;
     font-size:12.5px; line-height:1.4; color:var(--text-dim); background:var(--bg-panel-2);
@@ -359,10 +378,10 @@
     </div>
     <div class="conn">
       <span class="badge" id="statusBadge">connecting</span>
-      <span class="user-email hidden" id="userEmail"></span>
-      <button class="adv-toggle" onclick="openAssessment(null)">new AI assessment</button>
-      <button class="adv-toggle" onclick="toggleAdv()">connection settings</button>
-      <button class="adv-toggle hidden" id="logoutBtn" onclick="logout()">log out</button>
+      <button class="header-pill secondary" onclick="openAssessment(null)">new AI assessment</button>
+      <button class="header-pill secondary" onclick="toggleAdv()">connection settings</button>
+      <div class="profile-avatar hidden" id="profileAvatar"></div>
+      <button class="header-pill secondary logout hidden" id="logoutBtn" onclick="logout()">log out</button>
       <div class="adv-panel" id="advPanel">
         <input id="apiBase" placeholder="API base URL" value="http://localhost:8081" />
         <button class="btn-sm" onclick="saveConfig()">Reconnect</button>
@@ -804,7 +823,7 @@ function handleUnauthorized(){
   const hadToken = !!TOKEN;
   clearToken();
   document.getElementById('logoutBtn').classList.add('hidden');
-  document.getElementById('userEmail').classList.add('hidden');
+  document.getElementById('profileAvatar').classList.add('hidden');
   if(resetToken) return; // mid password-reset: keep that screen up, don't swap it for the login form
   showAuthScreen('login', hadToken ? 'Your session expired, please log in again.' : '');
 }
@@ -957,9 +976,10 @@ window.dismissBanner = function(){
 };
 
 function onAuthenticated(me){
-  const emailEl = document.getElementById('userEmail');
-  emailEl.textContent = me.email;
-  emailEl.classList.toggle('hidden', !!me.dev_bypass);
+  const avatarEl = document.getElementById('profileAvatar');
+  avatarEl.textContent = (me.email || '?').charAt(0).toUpperCase();
+  avatarEl.title = me.email || '';
+  avatarEl.classList.toggle('hidden', !!me.dev_bypass);
   document.getElementById('logoutBtn').classList.toggle('hidden', !TOKEN);
   if(flashBanner) return;
   if(me.email_verified) window.dismissBanner();
