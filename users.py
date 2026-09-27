@@ -72,6 +72,11 @@ class User:
     # Profile display only, never fed to prompts or shown to the persona.
     name: str | None = None
     company: str | None = None
+    # Access gate: a signed-up account can't use any functional endpoint
+    # until an admin approves it (see require_approved in auth.py). New
+    # rows default to False; existing/admin rows are flipped to True by
+    # the migration in _ensure_schema below.
+    approved: bool = False
 
 
 # --- passwords -------------------------------------------------------------
@@ -161,7 +166,10 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TEXT NOT NULL,
     token_version INTEGER NOT NULL DEFAULT 0,
     reset_token_hash TEXT,
-    reset_token_expires TEXT
+    reset_token_expires TEXT,
+    name TEXT,
+    company TEXT,
+    approved INTEGER NOT NULL DEFAULT 0
 )
 """
 
@@ -176,7 +184,10 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     token_version INTEGER NOT NULL DEFAULT 0,
     reset_token_hash TEXT,
-    reset_token_expires TEXT
+    reset_token_expires TEXT,
+    name TEXT,
+    company TEXT,
+    approved BOOLEAN NOT NULL DEFAULT FALSE
 )
 """
 
@@ -190,6 +201,7 @@ _ADDED_COLUMNS = [
     ("reset_token_expires", "TEXT"),
     ("name", "TEXT"),
     ("company", "TEXT"),
+    ("approved", "BOOLEAN NOT NULL DEFAULT FALSE"),  # modern SQLite (3.23+) and Postgres both accept TRUE/FALSE literals
 ]
 
 _schema_ready = False
@@ -233,19 +245,43 @@ def _ensure_schema() -> None:
             else:
                 for name, ddl in _ADDED_COLUMNS:
                     cur.execute(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS {name} {ddl}")
+
+            # --- Access-approval migration safety net ---------------------
+            # `approved` defaults to FALSE for every row, including ones
+            # that already existed before this column did. Left alone,
+            # that locks every existing account (including yours) out the
+            # moment this ships — same class of mistake as the missing
+            # CONSULTCASTAI_JWT_SECRET incident. Two idempotent fixes, run
+            # every time this function runs, not just once:
+            #
+            # 1. Any account already flagged is_admin gets auto-approved.
+            cur.execute(_sql("UPDATE users SET approved = ? WHERE is_admin = ?"), (True, True))
+            # 2. There was never a UI to set is_admin in the first place
+            #    (see README), so #1 alone likely approves nobody on this
+            #    app's actual existing database. CONSULTCASTAI_ADMIN_EMAIL,
+            #    if set, promotes that one account to admin+approved by
+            #    email regardless of its current is_admin value — set this
+            #    to your own login email BEFORE this migration first runs
+            #    against a real database, or you lock yourself out.
+            bootstrap_email = os.environ.get("CONSULTCASTAI_ADMIN_EMAIL", "").strip()
+            if bootstrap_email:
+                cur.execute(
+                    _sql("UPDATE users SET is_admin = ?, approved = ? WHERE email = ?"),
+                    (True, True, normalize_email(bootstrap_email)),
+                )
             conn.commit()
         finally:
             conn.close()
         _schema_ready = True
 
 
-def _run(query: str, params: tuple = (), fetch_one: bool = False):
+def _run(query: str, params: tuple = (), fetch_one: bool = False, fetch_all: bool = False):
     _ensure_schema()
     conn = _connect()
     try:
         cur = conn.cursor()
         cur.execute(_sql(query), params)
-        row = cur.fetchone() if fetch_one else None
+        row = cur.fetchone() if fetch_one else cur.fetchall() if fetch_all else None
         conn.commit()
         return row
     finally:
@@ -268,6 +304,7 @@ def _row_to_user(row) -> User | None:
         reset_token_expires=row["reset_token_expires"],
         name=row["name"],
         company=row["company"],
+        approved=bool(row["approved"]),
     )
 
 
@@ -400,3 +437,34 @@ def update_password_hash(user_id: str, new_hash: str) -> None:
     reset (which by definition wasn't authenticated first) still gets the
     full token_version bump via reset_password()."""
     _run("UPDATE users SET password_hash = ? WHERE id = ?", (new_hash, user_id))
+
+
+# --- access approval ---------------------------------------------------
+
+def set_approved(user_id: str, approved: bool) -> None:
+    _run("UPDATE users SET approved = ? WHERE id = ?", (approved, user_id))
+
+
+def promote_if_admin_bootstrap(user_id: str, email: str) -> bool:
+    """If CONSULTCASTAI_ADMIN_EMAIL matches this email, promotes this
+    account to admin+approved right away. This is the OTHER half of the
+    migration safety net in _ensure_schema: that one only reaches rows
+    that already existed the moment the schema migration ran (once, at
+    process start) — it can't retroactively catch a signup that happens
+    afterward. Called right after signup so the bootstrap admin's very
+    first signup works immediately, no separate approval step, whether
+    their account already existed before this shipped or not. Returns
+    whether it applied, purely so the caller can reflect it in the
+    response without a second DB round trip."""
+    bootstrap_email = os.environ.get("CONSULTCASTAI_ADMIN_EMAIL", "").strip()
+    if not bootstrap_email or normalize_email(email) != normalize_email(bootstrap_email):
+        return False
+    _run("UPDATE users SET is_admin = ?, approved = ? WHERE id = ?", (True, True, user_id))
+    return True
+
+
+def list_pending() -> list[User]:
+    """Accounts still waiting on admin approval, oldest request first (so
+    whoever's been waiting longest shows at the top)."""
+    rows = _run("SELECT * FROM users WHERE approved = ? ORDER BY created_at ASC", (False,), fetch_all=True)
+    return [_row_to_user(r) for r in rows]

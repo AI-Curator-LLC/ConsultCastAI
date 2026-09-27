@@ -14,6 +14,9 @@ Env vars:
   hit it directly).
 - CONSULTCASTAI_FRONTEND_URL: public base URL of the web app (password reset
   links open it, since setting a new password needs a form).
+- CONSULTCASTAI_ADMIN_EMAIL: where send_admin_notification_email delivers
+  "someone signed up" notices. Unset just skips sending (see users.py: this
+  same env var also bootstraps that account to admin+approved on startup).
 """
 
 import json
@@ -99,4 +102,23 @@ def send_password_reset_email(to_email: str, token: str) -> None:
         "you can ignore this email, your password won't change.</p>",
         dev_log_link=reset_url,
         what="password reset",
+    )
+
+
+def send_admin_notification_email(new_user_email: str) -> None:
+    """Best-effort "someone signed up and needs approval" notice. Silently
+    does nothing if CONSULTCASTAI_ADMIN_EMAIL isn't set — this is a
+    convenience, not the source of truth; the pending list (GET
+    /auth/pending) always has the real, current answer regardless of
+    whether this ever sends."""
+    admin_email = os.environ.get("CONSULTCASTAI_ADMIN_EMAIL", "").strip()
+    if not admin_email:
+        return
+    _send(
+        admin_email,
+        "New ConsultCastAI signup awaiting approval",
+        f"<p>{new_user_email} just signed up and is waiting for approval.</p>"
+        "<p>Log in and open Profile → Pending Requests to approve it.</p>",
+        dev_log_link="(no link for this one — approve from the app's Pending Requests panel)",
+        what="admin signup notification",
     )

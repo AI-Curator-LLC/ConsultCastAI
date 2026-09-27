@@ -25,7 +25,7 @@ auth mechanisms again later only touches verify_user's body.
 import os
 from dataclasses import dataclass
 
-from fastapi import Header, HTTPException
+from fastapi import Depends, Header, HTTPException
 
 import store
 import users
@@ -90,3 +90,25 @@ def require_owner(session_rep_id: str, user: AuthUser) -> None:
         return
     if session_rep_id != user.rep_id:
         raise HTTPException(status_code=403, detail="Not your session")
+
+
+def require_approved(user: AuthUser = Depends(verify_user)) -> AuthUser:
+    """Layered on top of verify_user for every functional (product)
+    endpoint: a real, signed-in account whose signup hasn't been approved
+    yet gets a specific 403 here, distinct from verify_user's 401s, so the
+    frontend can show "pending approval" instead of "please log in again".
+    Not applied to /auth/me, /auth/verify, /auth/resend-verification, or
+    the password-reset endpoints — a pending account still needs those to
+    work while it waits."""
+    if _dev_bypass_enabled():
+        return user  # nothing to approve in local dev bypass
+    account = users.get_user_by_id(user.rep_id)
+    if not account or not account.approved:
+        raise HTTPException(status_code=403, detail="Your access request is still pending approval")
+    return user
+
+
+def require_admin(user: AuthUser = Depends(verify_user)) -> AuthUser:
+    if not user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user

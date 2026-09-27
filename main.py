@@ -121,11 +121,25 @@ def signup(req: SignupRequest, background_tasks: BackgroundTasks):
     except users.EmailTaken:
         raise HTTPException(409, "An account with this email already exists")
 
-    # Soft requirement: sent after the response, and send_verification_email
-    # swallows its own errors, so a failed email can never block signup.
-    background_tasks.add_task(emailer.send_verification_email, user.email, verification_token)
+    # Covers the bootstrap admin signing up for the first time (or
+    # re-signing up after a deleted account) — the schema-migration half of
+    # this safety net (users._ensure_schema) only ever reaches rows that
+    # already existed before this shipped, not a fresh signup afterward.
+    if users.promote_if_admin_bootstrap(user.id, user.email):
+        user = users.get_user_by_id(user.id)
 
-    return {"token": _issue_or_500(user), "email": user.email, "email_verified": False}
+    # Soft requirements: sent after the response, and both swallow their own
+    # errors, so a failed send can never block signup. The account is
+    # unapproved by default (see users.approved) — this is a heads-up to
+    # whoever's set as CONSULTCASTAI_ADMIN_EMAIL, not a gate on anything.
+    background_tasks.add_task(emailer.send_verification_email, user.email, verification_token)
+    background_tasks.add_task(emailer.send_admin_notification_email, user.email)
+
+    # The JWT still issues (keeps the session model consistent — a pending
+    # account is logged in, just not able to use anything functional yet),
+    # and "approved" rides along so the frontend can show the pending
+    # screen immediately, without waiting for some other call to 403.
+    return {"token": _issue_or_500(user), "email": user.email, "email_verified": False, "approved": user.approved}
 
 
 @app.post("/auth/login")
@@ -136,7 +150,11 @@ def login(req: LoginRequest):
         raise HTTPException(401, "Incorrect email or password")
     if not users.verify_password(req.password, user.password_hash):
         raise HTTPException(401, "Incorrect email or password")
-    return {"token": _issue_or_500(user), "email": user.email, "email_verified": user.email_verified}
+    # Login succeeds regardless of approval status — require_approved is
+    # what actually blocks a pending account from doing anything, this just
+    # needs to hand back enough for the frontend to show that clearly
+    # rather than dropping a pending account into the main app.
+    return {"token": _issue_or_500(user), "email": user.email, "email_verified": user.email_verified, "approved": user.approved}
 
 
 @app.get("/auth/verify")
@@ -210,6 +228,7 @@ def me(user: auth.AuthUser = Depends(auth.verify_user)):
         return {
             "email": user.email, "email_verified": True, "dev_bypass": True,
             "created_at": None, "name": None, "company": None,
+            "is_admin": True, "approved": True,
         }
     account = users.get_user_by_id(user.rep_id)
     if not account:
@@ -217,17 +236,30 @@ def me(user: auth.AuthUser = Depends(auth.verify_user)):
     return {
         "email": account.email, "email_verified": account.email_verified, "dev_bypass": False,
         "created_at": account.created_at, "name": account.name, "company": account.company,
+        "is_admin": account.is_admin, "approved": account.approved,
     }
 
 
+@app.get("/auth/pending")
+def list_pending_requests(user: auth.AuthUser = Depends(auth.require_admin)):
+    pending = users.list_pending()
+    return [{"id": u.id, "email": u.email, "created_at": u.created_at} for u in pending]
+
+
+@app.post("/auth/approve/{user_id}")
+def approve_user(user_id: str, admin: auth.AuthUser = Depends(auth.require_admin)):
+    users.set_approved(user_id, True)
+    return {"message": "Approved"}
+
+
 @app.patch("/auth/profile")
-def update_profile(req: UpdateProfileRequest, user: auth.AuthUser = Depends(auth.verify_user)):
+def update_profile(req: UpdateProfileRequest, user: auth.AuthUser = Depends(auth.require_approved)):
     users.update_profile(user.rep_id, req.name, req.company)
     return {"message": "Profile updated"}
 
 
 @app.post("/auth/change-password")
-def change_password(req: ChangePasswordRequest, user: auth.AuthUser = Depends(auth.verify_user)):
+def change_password(req: ChangePasswordRequest, user: auth.AuthUser = Depends(auth.require_approved)):
     account = users.get_user_by_id(user.rep_id)
     if not account or not users.verify_password(req.current_password, account.password_hash):
         raise HTTPException(401, "Current password is incorrect")
@@ -269,7 +301,7 @@ def list_personas():
 
 
 @app.post("/sessions", response_model=SessionRecord)
-def start_session(req: StartSessionRequest, user: auth.AuthUser = Depends(auth.verify_user)):
+def start_session(req: StartSessionRequest, user: auth.AuthUser = Depends(auth.require_approved)):
     persona = content.get_persona(req.persona_id)
     scenario = content.get_scenario(req.scenario_id)
     if not persona or not scenario:
@@ -315,7 +347,7 @@ def start_session(req: StartSessionRequest, user: auth.AuthUser = Depends(auth.v
 
 
 @app.post("/sessions/{session_id}/turn", response_model=TurnResponse)
-def send_turn(session_id: str, req: TurnRequest, user: auth.AuthUser = Depends(auth.verify_user)):
+def send_turn(session_id: str, req: TurnRequest, user: auth.AuthUser = Depends(auth.require_approved)):
     session = store.get(session_id)
     if not session:
         raise HTTPException(404, "Session not found")
@@ -358,7 +390,7 @@ def send_turn(session_id: str, req: TurnRequest, user: auth.AuthUser = Depends(a
 
 
 @app.post("/sessions/{session_id}/end", response_model=EndSessionResponse)
-def end_session(session_id: str, user: auth.AuthUser = Depends(auth.verify_user)):
+def end_session(session_id: str, user: auth.AuthUser = Depends(auth.require_approved)):
     session = store.get(session_id)
     if not session:
         raise HTTPException(404, "Session not found")
@@ -392,7 +424,7 @@ def end_session(session_id: str, user: auth.AuthUser = Depends(auth.verify_user)
 
 
 @app.get("/sessions/mine")
-def list_my_sessions(user: auth.AuthUser = Depends(auth.verify_user)):
+def list_my_sessions(user: auth.AuthUser = Depends(auth.require_approved)):
     """Debrief History: every completed session belonging to the calling
     user, newest first. Filtered server-side by rep_id, so this can never
     return anyone else's sessions regardless of what the client asks for."""
@@ -413,7 +445,7 @@ def list_my_sessions(user: auth.AuthUser = Depends(auth.verify_user)):
 
 
 @app.post("/avatar/session-token", response_model=AvatarTokenResponse)
-def avatar_session_token(req: AvatarTokenRequest, user: auth.AuthUser = Depends(auth.verify_user)):
+def avatar_session_token(req: AvatarTokenRequest, user: auth.AuthUser = Depends(auth.require_approved)):
     """Mints a short-lived Anam live-avatar session token. Claude still
     drives every reply through /turn; Anam only renders face + voice."""
     persona = content.get_persona(req.persona_id)

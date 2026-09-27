@@ -104,8 +104,10 @@ Render will read `render.yaml` and prompt for the env vars marked
 `sync: false` (never committed): `ANTHROPIC_API_KEY`, `ANAM_API_KEY`,
 `CONSULTCASTAI_JWT_SECRET` (generate once, 32+ random characters; changing
 it later logs everyone out), `RESEND_API_KEY` (optional, verification emails
-are skipped without it), and `CONSULTCASTAI_ALLOWED_ORIGINS` (the frontend's
-Render URL).
+are skipped without it), `CONSULTCASTAI_ALLOWED_ORIGINS` (the frontend's
+Render URL), and `CONSULTCASTAI_ADMIN_EMAIL` (**critical, see Access
+approval below** — set this to your own login email or you will lock
+yourself out of your own account).
 
 Verification emails: Resend's shared test sender (the default) only delivers
 to your own Resend account's address. For real users, verify a sending domain
@@ -123,10 +125,33 @@ before it (each request is checked against the account, so a stolen session
 doesn't survive a password change). `users.py` adds the reset columns to an
 existing database automatically on startup, no manual migration needed.
 
+A "resend email" link on the verification banner (and in Profile) re-sends
+the same verification link, for when the original never arrived.
+
+Access approval: signing up creates an account but doesn't let it use
+anything functional (`/sessions`, `/turn`, `/end`, the avatar, session
+history, profile edits) until an admin approves it — see `auth.require_approved`
+in `main.py`. Login/signup still succeed for a pending account (so the
+frontend can show a clear "pending approval" screen instead of a confusing
+auth failure), just gated everywhere else.
+
+**`CONSULTCASTAI_ADMIN_EMAIL` is critical, read this before deploying.**
+The `approved` column defaults to `false`, including on rows that already
+existed before this shipped — same class of mistake as the missing
+`CONSULTCASTAI_JWT_SECRET` incident, if you don't set this you lock
+yourself out of your own account the moment it ships. Set it to your own
+login email: that account is automatically promoted to admin + approved on
+startup (covers an existing account) and again right after signup (covers
+a fresh one), regardless of whether `is_admin` was ever set on it before.
+It's also where "someone signed up" notification emails go (best-effort,
+optional — nothing breaks if it's unset or a send fails, the real answer
+is always `GET /auth/pending`, and the app's Profile menu -> Pending
+Requests when you're logged in as that admin).
+
 Not built yet: rate limiting on login/signup (add before this goes properly
-public, the reset cooldown is only a per-account email limit, not brute-force
-protection), and a way to resend a verification email. There's also no UI to
-make a user an admin, `is_admin` is a column on `users` you'd flip directly.
+public, the reset cooldown is only a per-account email limit, not
+brute-force protection), and a way to deny/reject a pending request rather
+than just leaving it pending or deleting the row directly.
 
 ## Voice, current state
 

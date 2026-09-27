@@ -258,14 +258,20 @@
     width:100%; height:100%; object-fit:cover; border-radius:13px; position:absolute; inset:0;
     transform:scaleX(-1); /* mirrored, the way every real video call shows your own camera */
   }
+  /* Vivid color boost on the sharp layer — the one carrying the actual
+     detail the viewer sees. Stacks with (doesn't fight) the softer
+     saturate(1.05) below, which only affects the blurred glow layer. */
+  #selfViewVideo{
+    filter:saturate(1.3) contrast(1.1);
+  }
   /* Soft-focus skin smoothing: #selfViewVideoSmooth plays the exact same
      stream as #selfViewVideo, blurred and layered on top at partial
      opacity. No canvas processing, no face tracking, just two video
      elements — same trick real soft-focus camera filters use. DOM order
      (declared after selfViewVideo) puts it on top with no z-index needed. */
   #selfViewVideoSmooth{
-    filter:blur(2px) saturate(1.05) brightness(1.03);
-    opacity:0.35;
+    filter:blur(4px) saturate(1.05) brightness(1.03);
+    opacity:0.55;
     pointer-events:none;
   }
   .self-view-text{color:var(--text-faint); font-size:11.5px; text-align:center; padding:0 16px;}
@@ -568,6 +574,7 @@
           <div class="who" id="profileEmail"></div>
           <button role="menuitem" onclick="openProfile()">Profile</button>
           <button role="menuitem" onclick="openDebriefHistory()">Debrief History</button>
+          <button role="menuitem" class="hidden" id="pendingRequestsMenuBtn" onclick="openPendingRequests()">Pending Requests</button>
           <button id="logoutBtn" class="danger" role="menuitem" onclick="logout()">Log out</button>
         </div>
       </div>
@@ -910,6 +917,34 @@
   </div>
 </div>
 
+<!-- Shown instead of the app for a logged-in account that hasn't been
+     approved yet (see auth.require_approved). Distinct from #authScreen:
+     the account is real and the JWT is valid, it's just not allowed to use
+     anything functional yet. Log out is the only action available here. -->
+<div id="pendingScreen" class="auth-screen hidden">
+  <div class="panel auth-card">
+    <div class="auth-brand">
+      <img src="assets/ccai-icon.png" alt="" />
+      <span class="brand-text">ConsultCast<span class="ai">AI</span></span>
+    </div>
+    <h2>Request pending</h2>
+    <p class="auth-note" style="margin-bottom:22px;">Your access request is pending approval. You'll be able to use ConsultCastAI as soon as an admin approves your account — no action needed from you in the meantime.</p>
+    <button class="btn ghost block" onclick="logout()">Log out</button>
+  </div>
+</div>
+
+<!-- PENDING REQUESTS (admin only) -->
+<section id="pendingRequestsScreen" class="hidden" style="margin-top:20px;">
+  <div class="panel">
+    <p class="eyebrow">Admin</p>
+    <h2>Pending Requests</h2>
+    <div id="pendingRequestsList"><p class="history-empty">Loading…</p></div>
+    <div class="end-row">
+      <button class="btn ghost" onclick="closePendingRequests()">Close</button>
+    </div>
+  </div>
+</section>
+
 <script type="module">
 import { createClient, AnamEvent } from "https://cdn.jsdelivr.net/npm/@anam-ai/js-sdk@4/+esm";
 
@@ -1118,6 +1153,13 @@ async function api(path, opts={}){
   if(!res.ok){
     const body = await res.text().catch(()=> '');
     if(res.status === 401) handleUnauthorized();
+    // A functional endpoint's require_approved 403 is distinct from
+    // "you're not allowed" (e.g. require_owner/require_admin's 403s) — this
+    // one means the account itself is real but still pending, so it gets
+    // its own screen instead of whatever generic error the caller would
+    // otherwise show (a stray alert() over a page that's about to be
+    // covered by the pending overlay anyway).
+    if(res.status === 403 && body.toLowerCase().includes('pending approval')) showPendingScreen();
     const err = new Error(`${res.status}: ${body}`);
     err.status = res.status;
     throw err;
@@ -1140,6 +1182,7 @@ function handleUnauthorized(){
   clearToken();
   closeProfileMenu();
   document.getElementById('profileWrap').classList.add('hidden');
+  hidePendingScreen();
   if(resetToken) return; // mid password-reset: keep that screen up, don't swap it for the login form
   showAuthScreen('login', hadToken ? 'Your session expired, please log in again.' : '');
 }
@@ -1268,9 +1311,14 @@ async function submitAuth(e){
     if(mode === 'reset') resetToken = null;
     TOKEN = data.token;
     localStorage.setItem('consultcastai_token', TOKEN);
-    hideAuthScreen();
     setAuthNote('');
-    onAuthenticated({ email: data.email, email_verified: data.email_verified, dev_bypass: false });
+    // Fetches fresh from /auth/me rather than building onAuthenticated's
+    // argument from this response directly: login/signup only hand back a
+    // few fields, and /auth/me is the one place that already knows how to
+    // report is_admin/approved/created_at/name/company correctly (including
+    // dev-bypass's special-cased response), so there's one source of truth
+    // instead of two slightly-different shapes to keep in sync.
+    await checkAuth();
   }catch(err){
     showAuthError('Could not reach the server. Check your connection and try again.');
   }finally{
@@ -1506,6 +1554,97 @@ async function loadDebriefHistory(){
   });
 }
 
+// --- Pending Requests (admin only) --------------------------------------
+window.openPendingRequests = function(){
+  closeProfileMenu();
+  document.getElementById('pendingRequestsScreen').classList.remove('hidden');
+  document.getElementById('pendingRequestsScreen').scrollIntoView({ behavior: 'smooth' });
+  loadPendingRequests();
+};
+
+window.closePendingRequests = function(){
+  document.getElementById('pendingRequestsScreen').classList.add('hidden');
+};
+
+async function loadPendingRequests(){
+  const list = document.getElementById('pendingRequestsList');
+  list.innerHTML = '<p class="history-empty">Loading…</p>';
+  let pending;
+  try{
+    pending = await api('/auth/pending');
+  }catch(e){
+    list.innerHTML = '';
+    const p = document.createElement('p');
+    p.className = 'history-empty';
+    p.textContent = 'Could not load pending requests: ' + e.message;
+    list.appendChild(p);
+    return;
+  }
+  list.innerHTML = '';
+  if(!pending.length){
+    const p = document.createElement('p');
+    p.className = 'history-empty';
+    p.textContent = 'Nothing waiting on approval right now.';
+    list.appendChild(p);
+    return;
+  }
+  pending.forEach(u => {
+    const row = document.createElement('div');
+    row.className = 'history-row';
+
+    const summary = document.createElement('div');
+    summary.className = 'history-summary';
+    summary.style.cursor = 'default'; // not an expand/collapse row, just a listing
+
+    const main = document.createElement('div');
+    main.className = 'history-main';
+    main.textContent = u.email;
+
+    const meta = document.createElement('div');
+    meta.className = 'history-meta';
+    meta.textContent = u.created_at ? new Date(u.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '';
+
+    const approveBtn = document.createElement('button');
+    approveBtn.className = 'btn-sm';
+    approveBtn.textContent = 'Approve';
+    approveBtn.style.marginLeft = '12px';
+    approveBtn.onclick = async () => {
+      approveBtn.disabled = true;
+      approveBtn.textContent = 'Approving…';
+      try{
+        await api(`/auth/approve/${u.id}`, { method: 'POST' });
+        row.remove(); // gone from this admin's list the instant it's handled, no full reload needed
+        if(!list.children.length){
+          const p = document.createElement('p');
+          p.className = 'history-empty';
+          p.textContent = 'Nothing waiting on approval right now.';
+          list.appendChild(p);
+        }
+      }catch(e){
+        approveBtn.disabled = false;
+        approveBtn.textContent = 'Approve';
+        alert('Could not approve: ' + e.message);
+      }
+    };
+
+    const right = document.createElement('div');
+    right.style.display = 'flex';
+    right.style.alignItems = 'center';
+    right.append(meta, approveBtn);
+
+    summary.append(main, right);
+    row.appendChild(summary);
+    list.appendChild(row);
+  });
+}
+
+function showPendingScreen(){
+  document.getElementById('pendingScreen').classList.remove('hidden');
+}
+function hidePendingScreen(){
+  document.getElementById('pendingScreen').classList.add('hidden');
+}
+
 function onAuthenticated(me){
   const avatarEl = document.getElementById('profileAvatar');
   avatarEl.textContent = (me.email || '?').charAt(0).toUpperCase();
@@ -1513,6 +1652,18 @@ function onAuthenticated(me){
   document.getElementById('profileEmail').textContent = me.email || '';
   // Nothing to log out of in dev bypass (no real session), so no menu either.
   document.getElementById('profileWrap').classList.toggle('hidden', !!me.dev_bypass || !TOKEN);
+  document.getElementById('pendingRequestsMenuBtn').classList.toggle('hidden', !me.is_admin);
+
+  // A signed-up-but-not-yet-approved account: real login, real JWT, just
+  // not allowed to use anything functional yet (see auth.require_approved).
+  // The pending screen covers the whole page, so none of the verify-banner/
+  // app setup below matters until that clears.
+  if(me.approved === false){
+    showPendingScreen();
+    return;
+  }
+  hidePendingScreen();
+
   if(flashBanner) return;
   document.getElementById('resendVerifyBtn').classList.toggle('hidden', !!me.email_verified || !!me.dev_bypass);
   if(me.email_verified) window.dismissBanner();
