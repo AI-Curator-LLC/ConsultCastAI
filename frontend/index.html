@@ -291,7 +291,13 @@
   .ctl svg{width:18px; height:18px; flex:none;}
   .ctl:hover:not(:disabled){border-color:var(--border-bright);}
   .ctl:disabled{opacity:0.4; cursor:not-allowed;}
-  .ctl.active{border-color:var(--blue); color:var(--blue-glow); box-shadow:0 0 0 1px var(--blue) inset;}
+  /* Pause/Resume: cyan, deliberately not the gradient/amber/red used
+     elsewhere in this bar (those already mean "normal toggle",
+     "abandon without a debrief", "hang up" respectively) — pausing is
+     fully reversible and low-stakes. Same color in both states: it's a
+     toggle, only the label changes, not the color. */
+  .ctl.ctl-cyan{background:var(--cyan); color:#050611; border:none;}
+  .ctl.ctl-cyan:hover:not(:disabled){filter:brightness(1.1);}
   /* Mute / Stop Video: same gradient as the primary Send button. */
   .ctl.ctl-gradient{background:linear-gradient(135deg, var(--blue), var(--purple)); color:#050611; border:none;}
   .ctl.ctl-gradient:hover:not(:disabled){filter:brightness(1.1);}
@@ -621,7 +627,7 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3z"/></svg>
           <span id="videoLabel">Start Video</span>
         </button>
-        <button class="ctl" id="pauseBtn" onclick="togglePause()" disabled title="Pause without ending the session (disconnects the live avatar so it doesn't keep costing minutes)">
+        <button class="ctl ctl-cyan" id="pauseBtn" onclick="togglePause()" disabled title="Pause without ending the session (disconnects the live avatar so it doesn't keep costing minutes)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" id="pauseIcon"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
           <span id="pauseLabel">Pause</span>
         </button>
@@ -1821,7 +1827,6 @@ function setSessionPaused(paused){
     ? '<polygon points="7,5 19,12 7,19" fill="currentColor" stroke="none"/>'   // play triangle — filled, unlike the parent svg's outlined pause bars
     : '<rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/>'; // pause bars
   document.getElementById('pauseLabel').textContent = paused ? 'Resume' : 'Pause';
-  document.getElementById('pauseBtn').classList.toggle('active', paused);
   document.getElementById('pauseBtn').title = paused ? 'Resume the session' : "Pause without ending the session (disconnects the live avatar so it doesn't keep costing minutes)";
   setMicBusy(sessionPaused ? true : false); // re-asserts the disabled state either way, closing the race noted above
   setSendBusy(paused);
