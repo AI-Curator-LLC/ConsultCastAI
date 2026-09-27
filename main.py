@@ -223,6 +223,7 @@ def list_personas():
             "context": p.context,
             "traits": p.traits,
             "trait_tags": p.trait_tags,
+            "coaching_tips": p.coaching_tips,
             "difficulty": p.difficulty,
             "has_avatar": bool(p.avatar_id and p.voice_id),
             "industry": p.industry,

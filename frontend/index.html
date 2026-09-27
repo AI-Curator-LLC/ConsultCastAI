@@ -204,6 +204,19 @@
     width:22px; height:22px; border-radius:50%; flex:none;
     display:flex; align-items:center; justify-content:center; font-size:12px;
   }
+  /* Coaching tips: same icon-badge + text language as the Real-Time Coaching
+     feed in the right panel, but a stacked list (not wrapping chips) since
+     these are full sentences that need room to read on one or two lines. */
+  .tip-row{
+    display:flex; align-items:flex-start; gap:10px; padding:10px 0;
+    font-size:13px; line-height:1.4; color:var(--text-dim);
+    border-bottom:1px solid rgba(255,255,255,0.05);
+  }
+  .tip-row:last-child{border-bottom:none;}
+  .tip-icon{
+    width:26px; height:26px; border-radius:50%; flex:none; margin-top:1px;
+    display:flex; align-items:center; justify-content:center; font-size:13px;
+  }
   .persona-scenario-tag{margin-bottom:12px;}
   .tag{font-family:var(--font-mono); font-size:10px; padding:4px 9px; border-radius:99px; background:rgba(155,92,255,0.14); color:var(--purple-glow); border:1px solid rgba(155,92,255,0.3); white-space:nowrap;}
   .persona-context{font-size:12.5px; color:var(--text-dim); line-height:1.55; margin-bottom:14px; padding-bottom:14px; border-bottom:1px solid var(--border);}
@@ -616,6 +629,10 @@
         <div class="side-section">
           <div class="side-label">Key behavior traits</div>
           <div class="chip-row" id="pTraitTags" style="margin-top:0;"></div>
+        </div>
+        <div class="side-section">
+          <div class="side-label">Coaching tips</div>
+          <div id="coachingTips"></div>
         </div>
       </div>
 
@@ -1427,6 +1444,20 @@ window.startSession = async function(){
       label.textContent = t.label;
       chip.append(icon, label);
       tagRow.appendChild(chip);
+    });
+    const tipsBlock = document.getElementById('coachingTips');
+    tipsBlock.innerHTML = '';
+    (currentPersona.coaching_tips || []).forEach(tip => {
+      const row = document.createElement('div');
+      row.className = 'tip-row';
+      const icon = document.createElement('span');
+      icon.className = 'tip-icon';
+      icon.style.background = tip.color;
+      icon.textContent = tip.icon;
+      const text = document.createElement('span');
+      text.textContent = tip.text;
+      row.append(icon, text);
+      tipsBlock.appendChild(row);
     });
     document.getElementById('avatarName').textContent = currentPersona.name;
     document.getElementById('avatarRole').textContent = shortRole(currentPersona.role);

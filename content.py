@@ -38,6 +38,10 @@ class Persona:
     # Display-only, hand-set from how hard each persona's personality is to
     # work with; nothing computes it and it never reaches the prompts.
     difficulty: str = "Medium"
+    # Pre-session prep tips shown in the left panel. Display-only, same
+    # shape as trait_tags: {"text": str, "icon": str (an emoji), "color": str
+    # (hex, used only for the tip's small icon-circle background)}.
+    coaching_tips: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -103,6 +107,13 @@ PERSONAS: dict[str, Persona] = {
             {"label": 'Ops-focused', "icon": '⚙️', "color": '#4de8ff'},
             {"label": 'Respects hands-on experience', "icon": '🤝', "color": '#ff5d7a'},
         ],
+
+        coaching_tips=[
+            {"text": 'Lead with numbers, not sales language', "icon": '💵', "color": '#4de8ff'},
+            {"text": "She respects people who've actually worked a floor", "icon": '👨\u200d🍳', "color": '#ffb84d'},
+            {"text": 'Expect to be interrupted if you ramble', "icon": '⚡', "color": '#ff5d7a'},
+            {"text": 'Talk in terms of a bad Friday night, not quarterly strategy', "icon": '🌙', "color": '#9b5cff'},
+        ],
     ),
     "harold_bennett": Persona(
         id="harold_bennett",
@@ -128,6 +139,13 @@ PERSONAS: dict[str, Persona] = {
             {"label": 'Liability-focused', "icon": '⚖️', "color": '#ff5d7a'},
             {"label": 'Unhurried', "icon": '🕰️', "color": '#ffb84d'},
         ],
+
+        coaching_tips=[
+            {"text": 'Never rush him, he sets the pace', "icon": '🕰️', "color": '#ffb84d'},
+            {"text": "Cite specifics, he'll catch vague claims immediately", "icon": '🔍', "color": '#4de8ff'},
+            {"text": 'Confidentiality and liability come before any pitch', "icon": '🔒', "color": '#ff5d7a'},
+            {"text": 'Expect to be cross-examined on every claim', "icon": '⚖️', "color": '#5b7fff'},
+        ],
     ),
     "priya_nair": Persona(
         id="priya_nair",
@@ -152,6 +170,13 @@ PERSONAS: dict[str, Persona] = {
             {"label": 'Tech-curious', "icon": '🔬', "color": '#9b5cff'},
             {"label": 'Impatient with fluff', "icon": '⏱️', "color": '#ff5d7a'},
             {"label": 'Data-driven', "icon": '📊', "color": '#4de8ff'},
+        ],
+
+        coaching_tips=[
+            {"text": "She's already using AI, don't explain what she knows", "icon": '🚫', "color": '#ff5d7a'},
+            {"text": "Show, don't tell, concrete examples win", "icon": '👀', "color": '#4de8ff'},
+            {"text": 'Get to the point fast, she has zero patience for fluff', "icon": '⚡', "color": '#ffb84d'},
+            {"text": 'Numbers and data move her more than adjectives', "icon": '📊', "color": '#5b7fff'},
         ],
     ),
     "dr_owens": Persona(
@@ -180,6 +205,13 @@ PERSONAS: dict[str, Persona] = {
             {"label": 'Risk-averse', "icon": '🚫', "color": '#5b7fff'},
             {"label": 'Wants it in writing', "icon": '✍️', "color": '#4de8ff'},
         ],
+
+        coaching_tips=[
+            {"text": 'Compliance and data privacy come before anything else', "icon": '🔐', "color": '#5b7fff'},
+            {"text": "Reassure her about her staff's jobs, not just efficiency", "icon": '🛡️', "color": '#ff5d7a'},
+            {"text": "She wants everything in writing, verbal promises won't land", "icon": '📝', "color": '#4de8ff'},
+            {"text": "Move slowly, she doesn't like being rushed into decisions", "icon": '🐢', "color": '#ffb84d'},
+        ],
     ),
     "tom_walsh": Persona(
         id="tom_walsh",
@@ -206,6 +238,13 @@ PERSONAS: dict[str, Persona] = {
             {"label": 'Distrusts complexity', "icon": '🧩', "color": '#9b5cff'},
             {"label": 'ROI-focused', "icon": '💰', "color": '#4de8ff'},
         ],
+
+        coaching_tips=[
+            {"text": 'Keep it simple, he distrusts anything complicated', "icon": '🧩', "color": '#9b5cff'},
+            {"text": "He's got crews on roofs, respect his time", "icon": '⏰', "color": '#ff5d7a'},
+            {"text": 'Talk hours saved, not features', "icon": '💰', "color": '#4de8ff'},
+            {"text": "No jargon, talk like you're on a job site", "icon": '🗣️', "color": '#5b7fff'},
+        ],
     ),
     "monica_reyes": Persona(
         id="monica_reyes",
@@ -230,6 +269,13 @@ PERSONAS: dict[str, Persona] = {
             {"label": 'Compliance-minded', "icon": '📜', "color": '#4de8ff'},
             {"label": 'Measured', "icon": '⚖️', "color": '#ffb84d'},
             {"label": 'Fiduciary-focused', "icon": '🏦', "color": '#ff5d7a'},
+        ],
+
+        coaching_tips=[
+            {"text": 'Fiduciary duty frames everything for her', "icon": '🏦', "color": '#ff5d7a'},
+            {"text": "She won't rush a decision, stay measured yourself", "icon": '⚖️', "color": '#ffb84d'},
+            {"text": 'Compliance concerns need real answers, not reassurance', "icon": '📜', "color": '#4de8ff'},
+            {"text": 'Formality matters, match her tone', "icon": '👔', "color": '#9b5cff'},
         ],
     ),
 }
