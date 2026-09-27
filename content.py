@@ -32,6 +32,10 @@ class Persona:
     # Short chips shown in the UI beside the `traits` paragraph. Display-only:
     # the paragraph is what feeds the system prompt, these are never sent to Claude.
     trait_tags: list[str] = field(default_factory=list)
+    # Static label shown in the persona card ("Easy" / "Medium" / "Hard").
+    # Display-only, hand-set from how hard each persona's personality is to
+    # work with; nothing computes it and it never reaches the prompts.
+    difficulty: str = "Medium"
 
 
 @dataclass
@@ -89,6 +93,7 @@ PERSONAS: dict[str, Persona] = {
         voice_id="c48c4dd9-5050-11f1-9076-5e955d484d11",
         avatar_model="cara-4",
         industry="restaurant",
+        difficulty="Medium",
         trait_tags=["Warm but guarded", "Talks fast", "Interrupts", "Ops-focused", "Respects hands-on experience"],
     ),
     "harold_bennett": Persona(
@@ -107,6 +112,7 @@ PERSONAS: dict[str, Persona] = {
             "else. Will not be rushed and enjoys finding the flaw in an argument."
         ),
         industry="legal",
+        difficulty="Hard",
         trait_tags=["Precise", "A little condescending", "Cross-examines", "Liability-focused", "Unhurried"],
     ),
     "priya_nair": Persona(
@@ -125,6 +131,7 @@ PERSONAS: dict[str, Persona] = {
             "well to being shown something specific she hasn't seen."
         ),
         industry="ecommerce",
+        difficulty="Medium",
         trait_tags=["Sharp", "Direct", "Tech-curious", "Impatient with fluff", "Data-driven"],
     ),
     "dr_owens": Persona(
@@ -145,6 +152,7 @@ PERSONAS: dict[str, Persona] = {
             "clear compliance answer."
         ),
         industry="dental",
+        difficulty="Hard",
         trait_tags=["Careful", "Procedural", "Protective of staff", "Risk-averse", "Wants it in writing"],
     ),
     "tom_walsh": Persona(
@@ -164,6 +172,7 @@ PERSONAS: dict[str, Persona] = {
             "anything that sounds like it needs 'training' to use."
         ),
         industry="roofing",
+        difficulty="Easy",
         trait_tags=["Plainspoken", "Friendly", "Time-pressed", "Distrusts complexity", "ROI-focused"],
     ),
     "monica_reyes": Persona(
@@ -182,6 +191,7 @@ PERSONAS: dict[str, Persona] = {
             "survive a compliance review before she believes it."
         ),
         industry="wealth_management",
+        difficulty="Medium",
         trait_tags=["Composed", "Formal", "Compliance-minded", "Measured", "Fiduciary-focused"],
     ),
 }
