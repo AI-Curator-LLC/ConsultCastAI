@@ -281,10 +281,14 @@
 
 
   .control-bar{display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-bottom:12px;}
-  .ctl{display:inline-flex; flex-direction:column; align-items:center; gap:6px; min-width:120px; padding:12px 24px;
-    background:var(--bg-panel-2); border:1px solid var(--border); color:var(--text); border-radius:12px; cursor:pointer;
-    font-family:inherit; font-size:12px; font-weight:600; transition:filter .15s;}
-  .ctl svg{width:20px; height:20px;}
+  /* Row layout (icon beside the label, not stacked above it) and the same
+     padding/font-size/weight as .end-btn below, so Mute/Stop Video/Pause/
+     Stop Session read as the same size and weight as End Session instead
+     of smaller icon chips next to one full-size button. */
+  .ctl{display:inline-flex; flex-direction:row; align-items:center; justify-content:center; gap:8px; min-width:120px;
+    height:48px; padding:0 22px; background:var(--bg-panel-2); border:1px solid var(--border); color:var(--text); border-radius:12px;
+    cursor:pointer; font-family:inherit; font-size:14px; font-weight:700; transition:filter .15s;}
+  .ctl svg{width:18px; height:18px; flex:none;}
   .ctl:hover:not(:disabled){border-color:var(--border-bright);}
   .ctl:disabled{opacity:0.4; cursor:not-allowed;}
   .ctl.active{border-color:var(--blue); color:var(--blue-glow); box-shadow:0 0 0 1px var(--blue) inset;}
@@ -299,8 +303,8 @@
      session with no debrief, a different kind of consequential. */
   .ctl.ctl-warn{background:var(--warn); color:#050611; border:none;}
   .ctl.ctl-warn:hover:not(:disabled){filter:brightness(1.1);}
-  .end-btn{margin-left:auto; background:linear-gradient(135deg, #ff5b7a, #ff3d63); color:#fff; border:none; border-radius:12px;
-    padding:14px 22px; font-family:inherit; font-size:14px; font-weight:700; cursor:pointer; box-shadow:0 0 22px rgba(255,79,109,0.3);}
+  .end-btn{margin-left:auto; height:48px; padding:0 22px; background:linear-gradient(135deg, #ff5b7a, #ff3d63); color:#fff; border:none; border-radius:12px;
+    display:inline-flex; align-items:center; justify-content:center; font-family:inherit; font-size:14px; font-weight:700; cursor:pointer; box-shadow:0 0 22px rgba(255,79,109,0.3);}
   .end-btn:disabled{opacity:0.5; cursor:not-allowed;}
   .controls-row{display:flex; gap:10px; margin-bottom:10px; align-items:flex-end;}
   .controls-row .field{margin-bottom:0; flex:0 0 150px;}
