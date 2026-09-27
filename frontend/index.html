@@ -217,8 +217,6 @@
   .avatar-live-box.streaming .live-badge{display:inline-flex;}
   .tile-name{position:absolute; left:10px; bottom:10px; z-index:2; display:flex; flex-direction:column; font-size:11px; line-height:1.3; color:var(--text-dim); background:rgba(5,6,17,0.66); padding:5px 10px; border-radius:8px; max-width:70%;}
   .tile-name strong{color:var(--text); font-size:12.5px;}
-  .caption-bar{display:none; position:absolute; left:10px; right:10px; bottom:58px; z-index:2; text-align:center; font-size:13px; line-height:1.4; color:#fff; background:rgba(5,6,17,0.78); padding:7px 12px; border-radius:8px; max-height:5.6em; overflow:hidden;}
-  .avatar-live-box.cc-on .caption-bar:not(:empty){display:block;}
   .self-view-box{
     width:100%; aspect-ratio:6/5; border-radius:14px;
     background:var(--bg-panel-2); border:1px solid var(--border); position:relative; overflow:hidden;
@@ -285,17 +283,9 @@
   .ctl:disabled{opacity:0.4; cursor:not-allowed;}
   .ctl.off{color:var(--danger); border-color:rgba(255,79,109,0.4);}
   .ctl.active{border-color:var(--blue); color:var(--blue-glow); box-shadow:0 0 0 1px var(--blue) inset;}
-  .ctl-select{flex:0 0 150px;}
-  .ctl-select select{padding:12px 34px 12px 13px; font-size:13px; border-radius:12px;}
   .end-btn{margin-left:auto; background:linear-gradient(135deg, #ff5b7a, #ff3d63); color:#fff; border:none; border-radius:12px;
     padding:14px 22px; font-family:inherit; font-size:14px; font-weight:700; cursor:pointer; box-shadow:0 0 22px rgba(255,79,109,0.3);}
   .end-btn:disabled{opacity:0.5; cursor:not-allowed;}
-  .more-wrap{position:relative;}
-  .more-menu{display:none; position:absolute; left:0; top:calc(100% + 8px); z-index:50; min-width:220px; background:var(--bg-panel-2);
-    border:1px solid var(--border); border-radius:12px; box-shadow:0 12px 32px rgba(0,0,0,0.5); padding:6px;}
-  .more-menu.open{display:block;}
-  .more-menu button{width:100%; text-align:left; background:none; border:none; cursor:pointer; font-family:inherit; font-size:13px; font-weight:600; color:var(--text); padding:9px 10px; border-radius:8px;}
-  .more-menu button:hover{background:rgba(255,255,255,0.06);}
   .controls-row{display:flex; gap:10px; margin-bottom:10px; align-items:flex-end;}
   .controls-row .field{margin-bottom:0; flex:0 0 150px;}
   .browser-note{
@@ -588,7 +578,6 @@
           <img id="avatarStill" class="avatar-still hidden" alt="" />
           <span class="avatar-still-text" id="avatarStillText"></span>
           <span class="live-badge">LIVE</span>
-          <div class="caption-bar" id="captionBar"></div>
           <div class="tile-name"><strong id="avatarName"></strong><span id="avatarRole"></span></div>
         </div>
         <div id="selfView" class="self-view-box">
@@ -611,26 +600,10 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3z"/></svg>
           <span id="videoLabel">Start Video</span>
         </button>
-        <div class="ctl-select">
-          <select id="modeSelect" onchange="onModeChange()" aria-label="Output">
-            <option value="text">Text only</option>
-            <option value="voice" selected>Voice</option>
-            <option value="avatar">Live avatar</option>
-          </select>
-        </div>
-        <button class="ctl" id="ccBtn" onclick="toggleCaptions()" disabled aria-pressed="false" title="Show what the persona says as captions on their video">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M10 10.5a2.5 2.5 0 1 0 0 3M17 10.5a2.5 2.5 0 1 0 0 3"/></svg>
-          <span>Closed Captions</span>
+        <button class="ctl hidden" id="restartBtn" onclick="restartSession()" title="Ends the session without generating a debrief">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="14" height="14" rx="3"/></svg>
+          <span>Stop Session</span>
         </button>
-        <div class="more-wrap">
-          <button class="ctl" id="moreBtn" onclick="toggleMoreMenu(event)" disabled aria-haspopup="menu" aria-expanded="false">
-            <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
-            <span>More</span>
-          </button>
-          <div class="more-menu" id="moreMenu" role="menu">
-            <button id="restartBtn" role="menuitem" class="hidden" onclick="restartSession()">Restart (no debrief)</button>
-          </div>
-        </div>
         <button class="end-btn hidden" id="endBtn" onclick="endSession()" title="End the session and get your debrief">End Session</button>
       </div>
 
@@ -1408,10 +1381,10 @@ window.startSession = async function(){
       startListening(); // outbound: you speak first, nothing to wait on before it's your turn
     }
 
-    // Respect whatever output mode was already picked before Start was
-    // pressed (defaults to Voice via the <select>'s own "selected" option
-    // if nothing was touched) — no longer force-reset here.
-    await onModeChange();
+    // No output picker in the UI: avatar if this persona has one configured,
+    // voice otherwise. (Text-only dropped along with the picker — nothing
+    // else in the app used it as a distinct path worth keeping a control for.)
+    await applyOutputMode();
 
     // Speak the opening line too, not just the reply to the first turn —
     // 1.5s pause gives it a natural beat and, in avatar mode, a moment for
@@ -1434,26 +1407,13 @@ window.startSession = async function(){
 // surface a helpful note rather than silently sounding bad.
 const IS_EDGE = /Edg\//.test(navigator.userAgent);
 
-window.onModeChange = async function(){
-  outputMode = document.getElementById('modeSelect').value;
+// Auto-picked at session start, no manual control: avatar when the persona
+// has one configured, voice otherwise.
+async function applyOutputMode(){
+  outputMode = (currentPersona && currentPersona.has_avatar) ? 'avatar' : 'voice';
   document.getElementById('browserNote').classList.toggle('hidden', IS_EDGE || outputMode !== 'voice');
-
-  if(outputMode === 'avatar'){
-    if(!currentPersona || !currentPersona.has_avatar){
-      alert("This persona doesn't have a live avatar configured yet. Falling back to voice.");
-      document.getElementById('modeSelect').value = 'voice';
-      outputMode = 'voice';
-      document.getElementById('browserNote').classList.toggle('hidden', IS_EDGE);
-      return;
-    }
-    // The selector is usable before Start now, so only actually mint an
-    // Anam session once a practice session exists — picking "Live avatar"
-    // ahead of time should just record the preference, not connect early.
-    if(sessionId) await startAvatar();
-  } else if(sessionId){
-    stopAvatar();
-  }
-};
+  if(outputMode === 'avatar') await startAvatar();
+}
 
 // The live avatar video ONLY ever renders in the center #avatarLive box,
 // in all three output modes (text/voice/avatar). The left panel's
@@ -1498,7 +1458,6 @@ async function startAvatar(){
   }catch(e){
     console.error('Avatar start failed:', e);
     alert('Could not start the live avatar (it may already be busy from a previous session), falling back to voice.');
-    document.getElementById('modeSelect').value = 'voice';
     outputMode = 'voice';
   }finally{
     avatarStarting = false;
@@ -1670,7 +1629,6 @@ function addCoachEntry(kind, text){
 // never get stuck off. This also prevents the mic picking up the persona's
 // own voice through the speakers while she's talking.
 async function speakPersonaLine(text, delayMs = 0){
-  setCaption(text);
   setMicBusy(true);
   try{
     if(delayMs > 0) await new Promise(r => setTimeout(r, delayMs));
@@ -1727,7 +1685,6 @@ window.sendTurn = async function(hintText){
   const text = (typeof hintText === 'string') ? hintText : input.value.trim();
   if(!text || !sessionId) return;
   input.value = '';
-  setCaption('');
   appendMsg('user', 'You', text);
 
   setSendBusy(true);
@@ -1764,7 +1721,7 @@ function setComposerEnabled(enabled){
   input.disabled = !enabled;
   document.getElementById('sendBtn').disabled = !enabled;
   mic.disabled = !enabled;
-  ['muteBtn', 'videoBtn', 'ccBtn', 'moreBtn'].forEach(id => { document.getElementById(id).disabled = !enabled; });
+  ['muteBtn', 'videoBtn'].forEach(id => { document.getElementById(id).disabled = !enabled; });
   input.placeholder = enabled ? 'Type your response, or use the mic...' : 'Start a session to send a message...';
   mic.title = enabled ? 'Speak your response' : 'Start a session first';
 }
@@ -1882,13 +1839,9 @@ window.resetAll = function(){
   setPersonaPhoto(null);
   setLiveChrome(false);
   micMuted = false; syncMuteBtn();
-  captionsOn = false; applyCaptions();
-  setCaption('');
-  closeMoreMenu();
   document.getElementById('startBtn').classList.remove('hidden');
   document.getElementById('endBtn').classList.add('hidden');
   document.getElementById('restartBtn').classList.add('hidden');
-  document.getElementById('modeSelect').value = 'voice';
   outputMode = 'voice';
   document.getElementById('browserNote').classList.add('hidden');
   stopListening(); // safety: don't leave the mic listening in the background after a session ends
@@ -1972,28 +1925,6 @@ window.toggleVideo = async function(){
   if(selfCameraStream) stopSelfCamera();
   else await startSelfCamera();
 };
-
-let captionsOn = false;
-function applyCaptions(){
-  document.getElementById('avatarLive').classList.toggle('cc-on', captionsOn);
-  const btn = document.getElementById('ccBtn');
-  btn.classList.toggle('active', captionsOn);
-  btn.setAttribute('aria-pressed', String(captionsOn));
-}
-window.toggleCaptions = function(){ captionsOn = !captionsOn; applyCaptions(); };
-function setCaption(text){ document.getElementById('captionBar').textContent = text || ''; }
-
-function closeMoreMenu(){
-  document.getElementById('moreMenu').classList.remove('open');
-  document.getElementById('moreBtn').setAttribute('aria-expanded', 'false');
-}
-window.toggleMoreMenu = function(e){
-  e.stopPropagation();
-  const open = document.getElementById('moreMenu').classList.toggle('open');
-  document.getElementById('moreBtn').setAttribute('aria-expanded', String(open));
-};
-document.addEventListener('click', closeMoreMenu);
-document.addEventListener('keydown', e => { if(e.key === 'Escape') closeMoreMenu(); });
 
 handleVerifiedParam();
 handleResetParam();
