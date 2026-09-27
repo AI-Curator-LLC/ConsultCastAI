@@ -6,7 +6,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>ConsultCastAI — AI Curator LLC</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700;800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&family=Caveat:wght@700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700;800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   :root{
     --bg: #050611;
@@ -54,20 +54,7 @@
      brand flourish, not another functional label. Muted opacity and no
      interactivity keep it from competing with the status badge/profile
      icon for attention. */
-  .header-tagline{
-    font-family:'Caveat', cursive; font-weight:700; font-size:20px; line-height:1;
-    background:linear-gradient(90deg, #4de8ff, #5b7fff, #9b5cff, #ff5dc8);
-    -webkit-background-clip:text; background-clip:text; color:transparent;
-    /* Faux neon glow: text-shadow/filter can't follow the gradient fill
-       itself, so this layers three glows (purple/blue/cyan, tightest to
-       widest) underneath, reading as a soft neon bloom behind the gradient
-       text rather than a flat single-color shadow. */
-    filter:
-      drop-shadow(0 0 2px rgba(155,92,255,0.85))
-      drop-shadow(0 0 4px rgba(91,127,255,0.6))
-      drop-shadow(0 0 7px rgba(77,232,255,0.4));
-    white-space:nowrap; user-select:none; pointer-events:none;
-  }
+  .header-tagline{height:30px; width:auto; pointer-events:none;} /* 22px read too small/dim next to the logo and badge at this scale */
 
   .conn{display:flex; align-items:center; gap:10px;}
   .live-pill{display:inline-flex; align-items:center; gap:8px; padding:7px 14px; border-radius:10px; font-size:13px; font-weight:600;
@@ -575,7 +562,7 @@
       <img src="assets/ccai-icon.png" alt="ConsultCastAI" />
       <span class="brand-text">ConsultCast<span class="ai">AI</span></span>
     </div>
-    <span class="header-tagline">Practice. Improve. Win.</span>
+    <img class="header-tagline" src="assets/tagline.png" alt="Practice. Improve. Win." />
     <div class="conn">
       <span class="live-pill hidden" id="livePill">Live</span>
       <span class="timer-pill hidden" id="headerTimer">0:00</span>
