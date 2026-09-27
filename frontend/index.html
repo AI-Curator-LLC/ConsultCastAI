@@ -258,12 +258,6 @@
     width:100%; height:100%; object-fit:cover; border-radius:13px; position:absolute; inset:0;
     transform:scaleX(-1); /* mirrored, the way every real video call shows your own camera */
   }
-  /* Vivid color boost on the sharp layer — the one carrying the actual
-     detail the viewer sees. Stacks with (doesn't fight) the softer
-     saturate(1.05) below, which only affects the blurred glow layer. */
-  #selfViewVideo{
-    filter:saturate(1.3) contrast(1.1);
-  }
   /* Soft-focus skin smoothing: #selfViewVideoSmooth plays the exact same
      stream as #selfViewVideo, blurred and layered on top at partial
      opacity. No canvas processing, no face tracking, just two video
