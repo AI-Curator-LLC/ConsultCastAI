@@ -301,6 +301,16 @@ def mark_verified(user_id: str) -> None:
     _run("UPDATE users SET email_verified = ?, verification_token = NULL WHERE id = ?", (True, user_id))
 
 
+def create_verification_token(user_id: str) -> str:
+    """Issues a fresh verification token (replacing any earlier one, so an
+    old copy of the link stops working) and returns the raw value to email.
+    Used for the initial signup email and every "resend" after it, so a
+    resend never depends on the original token still being present."""
+    token = secrets.token_urlsafe(32)
+    _run("UPDATE users SET verification_token = ? WHERE id = ?", (token, user_id))
+    return token
+
+
 # --- password reset --------------------------------------------------------
 
 def _hash_reset_token(token: str) -> str:

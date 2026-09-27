@@ -70,6 +70,14 @@ print(
 # guessing. Check the uvicorn startup log for this exact line.
 print("[consultcastai] BUILD MARKER: assessment-removed-v1")
 
+# Never prints the key itself, just whether one's configured and which
+# sender it'll use, so "is verification email even set up?" is answerable
+# from the startup log alone instead of guessing from send-time behavior.
+print(
+    f"[consultcastai] Email: RESEND_API_KEY {'set' if os.environ.get('RESEND_API_KEY', '').strip() else 'NOT SET (verification/reset emails are skipped, links are logged instead)'}; "
+    f"from={os.environ.get('CONSULTCASTAI_EMAIL_FROM', 'ConsultCastAI <onboarding@resend.dev> (default: only delivers to the Resend account owner)')}"
+)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_ALLOWED_ORIGINS,
@@ -173,21 +181,20 @@ def reset_password(req: ResetPasswordRequest):
 
 @app.post("/auth/resend-verification")
 def resend_verification(background_tasks: BackgroundTasks, user: auth.AuthUser = Depends(auth.verify_user)):
-    """Re-sends the same verification link, for when the original never
-    arrived (see emailer.py's docstring on Resend's shared sender). Reuses
-    the token issued at signup rather than minting a new one — it's still
-    valid until the account is verified, and a stale link floating around
-    from an earlier resend attempt should keep working too, not silently
-    stop. Answers the same way whether or not the email actually went out;
-    the frontend only shows this button pre-verification, so there's no
-    dev_bypass or already-verified case for it to handle gracefully."""
+    """Re-sends the verification link, for when the original never arrived
+    (see emailer.py's docstring on Resend's shared sender). Mints a fresh
+    token rather than reusing the one from signup — simpler than depending
+    on that one still being set, and it invalidates any earlier link, which
+    is the right behavior for a "resend" anyway. Answers the same way
+    whether or not the email actually went out; the frontend only shows
+    this button pre-verification, so there's no dev_bypass or
+    already-verified case for it to handle gracefully."""
     account = users.get_user_by_id(user.rep_id)
     if not account or account.email_verified:
+        print(f"[consultcastai] resend-verification no-op for {user.email}: account={'missing' if not account else 'found'}, verified={account.email_verified if account else None}")
         return {"ok": True}
-    if not account.verification_token:
-        # Shouldn't happen (only cleared by mark_verified), but don't 500 on it.
-        return {"ok": True}
-    background_tasks.add_task(emailer.send_verification_email, account.email, account.verification_token)
+    token = users.create_verification_token(account.id)
+    background_tasks.add_task(emailer.send_verification_email, account.email, token)
     return {"ok": True}
 
 
