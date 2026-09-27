@@ -43,7 +43,7 @@
   }
   .wrap{max-width:1440px; margin:0 auto; padding:18px 18px 50px;}
 
-  header{display:flex; align-items:center; justify-content:space-between; margin-bottom:22px; gap:16px; flex-wrap:wrap;}
+  header{display:flex; align-items:center; justify-content:space-between; margin-bottom:22px; gap:16px; flex-wrap:wrap; position:relative;}
   .brand{display:flex; align-items:center; gap:10px;}
   .brand img{height:38px; width:auto; display:block;}
   .brand-text{font-family:var(--font-display); font-size:19px; font-weight:700; letter-spacing:0.2px;}
@@ -54,7 +54,21 @@
      brand flourish, not another functional label. Muted opacity and no
      interactivity keep it from competing with the status badge/profile
      icon for attention. */
-  .header-tagline{height:30px; width:auto; pointer-events:none;} /* 22px read too small/dim next to the logo and badge at this scale */
+  /* True-centered in the header regardless of how wide .brand/.conn are
+     (impossible with justify-content:space-between alone once the two
+     side groups are unequal widths) — absolutely positioned against
+     header{position:relative} above, so it never disturbs .brand/.conn's
+     own flex flow. Sized by height, not width: this asset's native 3:1
+     aspect ratio would be ~150px tall at the 450px width originally
+     asked for, ballooning the header; sizing by height instead keeps the
+     header the size it is today. max-width is a belt-and-suspenders cap
+     so it shrinks instead of overlapping .brand/.conn if the header ever
+     gets narrow enough for that to matter before the phone breakpoint
+     below hides it outright. */
+  .header-tagline{
+    position:absolute; left:50%; top:50%; transform:translate(-50%, -50%);
+    height:52px; width:auto; max-width:38vw; object-fit:contain; pointer-events:none;
+  }
 
   .conn{display:flex; align-items:center; gap:10px;}
   .live-pill{display:inline-flex; align-items:center; gap:8px; padding:7px 14px; border-radius:10px; font-size:13px; font-weight:600;
@@ -562,7 +576,7 @@
       <img src="assets/ccai-icon.png" alt="ConsultCastAI" />
       <span class="brand-text">ConsultCast<span class="ai">AI</span></span>
     </div>
-    <img class="header-tagline" src="assets/tagline.png" alt="Practice. Improve. Win." />
+    <img class="header-tagline" src="assets/tagline-banner.png" alt="Practice. Improve. Win." />
     <div class="conn">
       <span class="live-pill hidden" id="livePill">Live</span>
       <span class="timer-pill hidden" id="headerTimer">0:00</span>
