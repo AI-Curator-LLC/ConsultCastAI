@@ -257,6 +257,106 @@ beyond 5, transferring team ownership, proration on plan changes (the
 Customer Portal handles the basic case), custom dunning logic beyond
 Stripe's built-in retries — all deliberately deferred, not oversights.
 
+## Data retention, deletion, and export
+
+Gives users control over their data and puts a real, enforced expiry on
+stored sessions.
+
+| Data | Rule |
+|---|---|
+| Full transcript (`conversation`) | Purged `TRANSCRIPT_RETENTION_DAYS` (90) after the session was created |
+| Debrief, scores, session metadata | Kept `DEBRIEF_RETENTION_DAYS` (365) total, then the whole record is deleted |
+| Sessions with no debrief (abandoned) | Whole record deleted at `TRANSCRIPT_RETENTION_DAYS`, nothing worth keeping |
+| After cancellation | Kept `POST_CANCEL_GRACE_DAYS` (90) past `current_period_end`, then that user's (or team member's) sessions are deleted |
+| User deletes a session, or all sessions | Deleted immediately |
+| User deletes their account | Account, sessions, and usage records deleted immediately |
+| Billing records | Stripe holds them — we keep only customer id, status, and dates |
+
+All three periods are env vars (`retention.py`), defaulted to the values
+above and declared in `render.yaml` so they're one edit away, no code
+change needed.
+
+`retention.py` runs as a background thread started at app startup (see
+main.py's `startup` event), not a Render Cron Job — a Cron Job is a
+separate service/container and can't reach this service's persistent disk
+(a Render Disk mounts to exactly one service). Runs once immediately, then
+every 24 hours; a single Render instance means it never double-runs, and
+`run_once()` is written to be idempotent anyway. Each pass:
+1. Backfills `created_at` on any record that predates the field (stamped
+   with "now", skipped this run — never treated as "very old" and deleted).
+2. Purges the transcript (empties `conversation`, sets
+   `transcript_purged = true`, keeps the debrief) on anything past
+   `TRANSCRIPT_RETENTION_DAYS` that still has a debrief; deletes outright
+   anything past `TRANSCRIPT_RETENTION_DAYS` with no debrief, or past
+   `DEBRIEF_RETENTION_DAYS` regardless.
+3. Deletes every session for a rep (or team member) whose subscription (or
+   team's) reads `canceled` with `current_period_end` more than
+   `POST_CANCEL_GRACE_DAYS` in the past.
+4. Logs only counts ("purged 12 transcripts, deleted 3 sessions") — never
+   session content or message text.
+
+Concurrency: `store.py`'s local-file writes (`save`, `delete`,
+`delete_for_rep`, `purge_transcript`, `backfill_created_at`) all go through
+the same lock and now write atomically (temp file + rename), so the job
+rewriting the file on a timer can't collide with a `/turn` request saving
+mid-session, and a crash mid-write can never leave a truncated file. Every
+mutation also re-checks its own condition (still has a debrief, isn't
+already purged, key is still missing) right before writing, under the
+lock, so a session that's still active by the time the job actually gets
+to it is never touched even if it looked eligible when first scanned.
+
+User controls, all gated on `auth.verify_user` only — deliberately not
+`require_approved` or `require_active_plan`, since a lapsed, canceled, or
+still-pending account must be able to reach these regardless (the Profile
+screen normally isn't reachable while pending, so the pending-approval
+screen itself gets a lightweight "Account settings" link straight to it):
+
+- `DELETE /sessions/{id}` — owner-only (`auth.require_owner`, same check
+  `/turn` and `/end` already use: 404 if the id doesn't exist, 403 if it's
+  someone else's).
+- `DELETE /me/sessions` — deletes every one of the caller's own sessions.
+  Never touches `usage_records` — that's account deletion's job below, not
+  plain session deletion, which must not let anyone claw back part of
+  their monthly cap by deleting sessions.
+- `GET /me/export` — profile fields, plan status, and every one of the
+  caller's sessions (metadata, debrief, and the transcript unless already
+  purged), filtered by `rep_id` the same way `/sessions/mine` is.
+- `POST /me/delete-account` (body: `{"password": "..."}`) — requires the
+  current password (same check as change-password), then deletes the
+  account row, all its sessions, and its usage records. Refused while a
+  subscription reads active: an individual account checks its own, a team
+  owner checks the team's (a regular member is always allowed to leave,
+  which just frees their seat — they were never the one being billed). The
+  Stripe customer record itself is never deleted; Stripe keeps billing
+  history for tax purposes independent of this account existing.
+
+Frontend: Debrief History gets a Download button (writes the debrief to a
+`.txt` file client-side, no extra endpoint) and a Delete button per
+session, plus a "Delete all sessions" button. Profile gets "Export my
+data" (downloads the `/me/export` JSON) and a Danger Zone requiring the
+current password and typing `DELETE` to confirm — hidden entirely in local
+dev-bypass mode, which has no real password to check.
+
+Server logs: Render controls retention on its side — don't promise a
+specific window in a Privacy Policy until that's actually been checked for
+the plan in use. Confirmed no log line prints session content or message
+text; current error logs print exception types only.
+
+Backups: check whether Render keeps persistent-disk snapshots and for how
+long before stating anything about it publicly — deleted data can outlive
+this job in a snapshot until that expires.
+
+Not built yet: a manual "run the cleanup job now" trigger (it runs on its
+own schedule, no admin control surface for it), and the actual production
+verification this needs before any of the above gets restated as a Privacy
+Policy promise — see the next paragraph.
+
+**Before publishing any retention/deletion wording externally**: confirm
+the job has actually run against production data at least once, generated
+`created_at` values behave as expected for anything pre-dating the field
+you added, and Render's real log/snapshot retention for backups have
+actually been checked, not assumed.
+
 ## Voice, current state
 
 The frontend uses the browser's built-in Web Speech API (`SpeechRecognition`

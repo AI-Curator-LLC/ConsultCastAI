@@ -29,6 +29,7 @@ import anam_client
 import content
 import coaching
 import emailer
+import retention
 import store
 import teams
 import users
@@ -49,6 +50,7 @@ from models import (
     ChangePasswordRequest,
     CheckoutRequest,
     InviteRequest,
+    DeleteAccountRequest,
 )
 from prompts import build_system_prompt, build_debrief_prompt, build_opener_prompt
 
@@ -133,6 +135,15 @@ def get_real_ip(request: Request) -> str:
 limiter = Limiter(key_func=get_real_ip)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+@app.on_event("startup")
+def _start_retention_job() -> None:
+    """Data retention cleanup (see retention.py): runs once immediately,
+    then every 24 hours, on a background thread in this same process — a
+    Render Cron Job can't reach this service's persistent disk (a disk
+    mounts to one service only), so this has to live here instead."""
+    retention.start_background_job()
 
 _coaching_state: dict[str, coaching.CoachingState] = {}
 _start_time: dict[str, float] = {}
@@ -771,6 +782,127 @@ def list_my_sessions(user: auth.AuthUser = Depends(auth.require_approved)):
         }
         for s in completed
     ]
+
+
+@app.delete("/sessions/{session_id}")
+def delete_session(session_id: str, user: auth.AuthUser = Depends(auth.verify_user)):
+    """User-initiated deletion of one session — deliberately Depends(
+    auth.verify_user) only, not require_approved/require_active_plan: a
+    lapsed, canceled, or still-pending account must still be able to delete
+    its own data (see the Data Retention, Deletion, and Export spec).
+    Owner-only via auth.require_owner, the same ownership check /turn and
+    /end already use: 404 for a session id that doesn't exist at all, 403
+    for one that exists but isn't yours."""
+    session = store.get(session_id)
+    if not session:
+        raise HTTPException(404, "Session not found")
+    auth.require_owner(session.rep_id, user)
+    store.delete(session_id)
+    return {"message": "Session deleted"}
+
+
+@app.delete("/me/sessions")
+def delete_my_sessions(user: auth.AuthUser = Depends(auth.verify_user)):
+    """Deletes every one of the caller's own sessions. Never touches
+    usage_records (see store.increment_session_count's docstring) — this is
+    plain session deletion, not account deletion, and must not let anyone
+    claw back part of their monthly cap by deleting sessions."""
+    count = store.delete_for_rep(user.rep_id)
+    return {"message": f"Deleted {count} session(s)"}
+
+
+@app.get("/me/export")
+def export_my_data(user: auth.AuthUser = Depends(auth.verify_user)):
+    """Everything the caller owns: profile fields, plan status, and every
+    one of their sessions (metadata + debrief, plus the transcript unless
+    it's already been purged by the retention job). Filtered by rep_id the
+    same way /sessions/mine is, so this can never return anyone else's
+    data regardless of what the client asks for."""
+    if auth.is_dev_bypass():
+        account = None
+    else:
+        account = users.get_user_by_id(user.rep_id)
+        if not account:
+            raise HTTPException(401, "Account no longer exists, please log in again")
+
+    sessions = store.list_for_rep(user.rep_id)
+    sessions.sort(key=lambda s: s.created_at)
+
+    def _session_dict(s: SessionRecord) -> dict:
+        return {
+            "id": s.id,
+            "persona_name": s.persona_name,
+            "persona_role": s.persona_role,
+            "scenario_title": s.scenario_title,
+            "scenario_product": s.scenario_product,
+            "call_direction": s.call_direction,
+            "status": s.status,
+            "created_at": s.created_at,
+            "duration_sec": s.duration_sec,
+            "pressure": s.pressure,
+            "trust": s.trust,
+            "specificity": s.specificity,
+            "debrief": s.debrief,
+            "transcript_purged": s.transcript_purged,
+            "transcript": None if s.transcript_purged else [t.model_dump() for t in s.conversation],
+        }
+
+    if account is None:
+        profile = {"email": user.email, "name": None, "company": None, "created_at": None}
+        plan = {"plan_tier": None, "subscription_status": None, "current_period_end": None, "team_id": None}
+    else:
+        profile = {
+            "email": account.email, "name": account.name, "company": account.company,
+            "created_at": account.created_at,
+        }
+        plan = {
+            "plan_tier": account.plan_tier, "subscription_status": account.subscription_status,
+            "current_period_end": account.current_period_end, "team_id": account.team_id,
+        }
+
+    return {
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "profile": profile,
+        "plan": plan,
+        "sessions": [_session_dict(s) for s in sessions],
+    }
+
+
+@app.post("/me/delete-account")
+def delete_account(req: DeleteAccountRequest, user: auth.AuthUser = Depends(auth.verify_user)):
+    """Deletes the account, all of its sessions, and its usage records,
+    immediately and irreversibly. Requires the current password (same check
+    as /auth/change-password). Refused while a subscription is genuinely
+    active — deleting the account out from under a live Stripe subscription
+    would keep billing them with no account left to use it. A team owner is
+    held to the same rule via the team's own subscription; a regular
+    (non-owner) team member is always allowed to leave, which simply frees
+    their seat — they were never the one being billed. The Stripe customer
+    record itself is deliberately NOT deleted: Stripe keeps billing history
+    for tax purposes independent of this account existing."""
+    if auth.is_dev_bypass():
+        raise HTTPException(400, "Account deletion isn't available in local dev bypass mode")
+    account = users.get_user_by_id(user.rep_id)
+    if not account or not users.verify_password(req.password, account.password_hash):
+        raise HTTPException(401, "Current password is incorrect")
+
+    if account.team_id:
+        team = teams.get_team(account.team_id)
+        is_owner = bool(team and team.owner_user_id == account.id)
+        # Same predicate main.py's other billing checks already use
+        # (teams.team_subscription_active) rather than a separate
+        # "status == canceled" check, so this stays consistent with every
+        # other "is this subscription currently active" decision in the
+        # app: refuse while it reads as active, allow once it doesn't.
+        if is_owner and team and teams.team_subscription_active(team):
+            raise HTTPException(400, "Cancel your team's subscription first via Manage subscription, then you can delete your account")
+    elif users.subscription_active(account):
+        raise HTTPException(400, "Cancel your subscription first via Manage subscription, then you can delete your account")
+
+    store.delete_for_rep(account.id)
+    store.delete_usage_records_for_rep(account.id)
+    users.delete_user(account.id)
+    return {"message": "Account deleted"}
 
 
 @app.post("/avatar/session-token", response_model=AvatarTokenResponse)

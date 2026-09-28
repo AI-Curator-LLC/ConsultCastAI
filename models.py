@@ -38,6 +38,10 @@ class ChangePasswordRequest(BaseModel):
     new_password: str
 
 
+class DeleteAccountRequest(BaseModel):
+    password: str
+
+
 class CheckoutRequest(BaseModel):
     plan: str  # "pro_monthly" | "pro_annual" | "team_monthly" | "team_annual"
 
@@ -68,6 +72,13 @@ class SessionRecord(BaseModel):
     duration_sec: int = 0
     debrief: str | None = None
     status: str = "active"  # "active" | "completed"
+    # Set by the retention cleanup job once the transcript ages past
+    # TRANSCRIPT_RETENTION_DAYS (see retention.py): conversation is emptied,
+    # this flips to True, everything else (debrief, scores, metadata) is
+    # kept. Declared here (not left as a bare dict key) so it survives a
+    # SessionRecord(**raw) round trip instead of silently being dropped —
+    # Pydantic v2 ignores undeclared extra fields by default.
+    transcript_purged: bool = False
     # Set once, at construction, never touched again. Existing sessions saved
     # before this field existed get "now" the first time they're re-loaded
     # (the default_factory firing on that load, not their real start time) —

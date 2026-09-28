@@ -59,7 +59,14 @@ def _local_read_all() -> dict:
 
 
 def _local_write_all(data: dict) -> None:
-    _LOCAL_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    # Atomic replace (write to a temp file, then rename over the real path)
+    # so a crash or a concurrent reader mid-write never sees a truncated or
+    # partially-written file — matters more now that the retention cleanup
+    # job (retention.py) rewrites this file on a timer while /turn requests
+    # are also saving to it under the same lock.
+    tmp_path = _LOCAL_PATH.with_suffix(_LOCAL_PATH.suffix + ".tmp")
+    tmp_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    os.replace(tmp_path, _LOCAL_PATH)
 
 
 def _usage_read_all() -> dict:
@@ -118,6 +125,111 @@ def list_for_rep(rep_id: str) -> list[SessionRecord]:
     return [SessionRecord(**d.to_dict()) for d in docs]
 
 
+def delete(session_id: str) -> bool:
+    """Permanently removes one session record. Used by user-initiated
+    deletion (DELETE /sessions/{id}, DELETE /me/sessions, account deletion)
+    and by the retention cleanup job's age-based rules. Returns whether a
+    record actually existed to delete."""
+    if _LOCAL:
+        with _LOCAL_LOCK:
+            data = _local_read_all()
+            existed = data.pop(session_id, None) is not None
+            if existed:
+                _local_write_all(data)
+        return existed
+    doc_ref = _get_client().collection(_COLLECTION).document(session_id)
+    existed = doc_ref.get().exists
+    if existed:
+        doc_ref.delete()
+    return existed
+
+
+def delete_for_rep(rep_id: str) -> int:
+    """Deletes every session belonging to one rep in one pass — used by
+    DELETE /me/sessions, full account deletion, and the retention job's
+    post-cancellation-grace rule. Returns how many were deleted."""
+    if _LOCAL:
+        with _LOCAL_LOCK:
+            data = _local_read_all()
+            to_remove = [sid for sid, rec in data.items() if rec.get("rep_id") == rep_id]
+            for sid in to_remove:
+                data.pop(sid, None)
+            if to_remove:
+                _local_write_all(data)
+        return len(to_remove)
+    docs = list(_get_client().collection(_COLLECTION).where("rep_id", "==", rep_id).stream())
+    for d in docs:
+        d.reference.delete()
+    return len(docs)
+
+
+def purge_transcript(session_id: str) -> bool:
+    """Empties the conversation and flags transcript_purged, keeping the
+    debrief/scores/metadata — the retention job's TRANSCRIPT_RETENTION_DAYS
+    rule. Re-checks the record still has a debrief and isn't already purged
+    right before writing, under the same lock as every other write, so a
+    session that's still active (or already handled) by the time this
+    actually runs is never touched, even if it looked eligible when the
+    caller first scanned the store. Returns whether it actually purged
+    anything."""
+    if _LOCAL:
+        with _LOCAL_LOCK:
+            data = _local_read_all()
+            rec = data.get(session_id)
+            if not rec or not rec.get("debrief") or rec.get("transcript_purged"):
+                return False
+            rec["conversation"] = []
+            rec["transcript_purged"] = True
+            data[session_id] = rec
+            _local_write_all(data)
+        return True
+    doc_ref = _get_client().collection(_COLLECTION).document(session_id)
+    doc = doc_ref.get()
+    if not doc.exists:
+        return False
+    rec = doc.to_dict()
+    if not rec.get("debrief") or rec.get("transcript_purged"):
+        return False
+    doc_ref.update({"conversation": [], "transcript_purged": True})
+    return True
+
+
+def backfill_created_at(session_id: str, created_at_iso: str) -> bool:
+    """Stamps created_at on a record that predates the field (see
+    SessionRecord's docstring comment on created_at) without touching
+    anything else. Re-checks the key is still genuinely absent right at
+    write time, under the lock, so this can never clobber a real timestamp.
+    Returns whether it actually wrote anything."""
+    if _LOCAL:
+        with _LOCAL_LOCK:
+            data = _local_read_all()
+            rec = data.get(session_id)
+            if not rec or "created_at" in rec:
+                return False
+            rec["created_at"] = created_at_iso
+            data[session_id] = rec
+            _local_write_all(data)
+        return True
+    doc_ref = _get_client().collection(_COLLECTION).document(session_id)
+    doc = doc_ref.get()
+    if not doc.exists or "created_at" in doc.to_dict():
+        return False
+    doc_ref.update({"created_at": created_at_iso})
+    return True
+
+
+def list_all_raw() -> dict[str, dict]:
+    """Every session record as a raw dict keyed by id — used only by the
+    retention cleanup job (retention.py), which needs to see whether
+    created_at is genuinely absent (a record that predates the field)
+    rather than letting SessionRecord's default_factory silently paper
+    over that with "now" the way get()/list_for_rep() would."""
+    if _LOCAL:
+        with _LOCAL_LOCK:
+            return _local_read_all()
+    return {d.id: d.to_dict() for d in _get_client().collection(_COLLECTION).stream()}
+
+
 # --- usage metering (billing enforcement, see auth.require_active_plan) ---
 # Same local-file-or-Firestore split as sessions above, and the same
 # "fine for solo-founder scale, not a real concurrency guarantee" caveat
@@ -127,6 +239,29 @@ def list_for_rep(rep_id: str) -> list[SessionRecord]:
 
 def _usage_key(user_id: str, month: str) -> str:
     return f"{user_id}:{month}"
+
+
+def delete_usage_records_for_rep(user_id: str) -> int:
+    """Removes every month's usage record for one rep. Called only from full
+    account deletion (main.py's /me/delete-account) — never from plain
+    session deletion, which must NOT touch usage_records (see
+    increment_session_count's docstring: deleting sessions must not let
+    someone claw back part of their monthly cap). The account itself is
+    gone by the time this runs, so there's no cap left to protect."""
+    prefix = f"{user_id}:"
+    if _LOCAL:
+        with _USAGE_LOCAL_LOCK:
+            data = _usage_read_all()
+            keys = [k for k in data if k.startswith(prefix)]
+            for k in keys:
+                data.pop(k, None)
+            if keys:
+                _usage_write_all(data)
+        return len(keys)
+    docs = list(_get_client().collection(_USAGE_COLLECTION).where("user_id", "==", user_id).stream())
+    for d in docs:
+        d.reference.delete()
+    return len(docs)
 
 
 def get_usage(user_id: str, month: str) -> UsageRecord:

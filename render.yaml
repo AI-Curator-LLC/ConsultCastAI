@@ -83,12 +83,29 @@ services:
         value: "1"
       - key: CONSULTCASTAI_LOCAL_STORE_PATH
         value: /data/sessions_local.json
+      # Was defaulting to a relative path (usage_local.json) in the app's own
+      # working directory, not the persistent disk — every deploy/restart
+      # silently reset everyone's monthly session count. Caught while adding
+      # the retention job below, which also reads/writes this file.
+      - key: CONSULTCASTAI_USAGE_STORE_PATH
+        value: /data/usage_local.json
       - key: CONSULTCASTAI_LOCAL_USERS
         value: "1"
       - key: CONSULTCASTAI_USERS_DB_PATH
         value: /data/users.db
       - key: CONSULTCASTAI_DEV_AUTH_BYPASS
         value: "0"  # the whole point of this deploy: local storage, real auth
+      # Data retention (see retention.py and README's "Data retention,
+      # deletion, and export" section): how long transcripts, debriefs, and
+      # a lapsed subscription's sessions are kept before deletion. Defaults
+      # match these values already, listed here so they're one edit away
+      # without a code change and stay in version control either way.
+      - key: TRANSCRIPT_RETENTION_DAYS
+        value: "90"
+      - key: DEBRIEF_RETENTION_DAYS
+        value: "365"
+      - key: POST_CANCEL_GRACE_DAYS
+        value: "90"
       # Where the emailed verification link points, and where it lands afterward.
       - key: CONSULTCASTAI_BACKEND_URL
         value: https://consultcastai-api.onrender.com

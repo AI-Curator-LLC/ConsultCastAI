@@ -576,3 +576,16 @@ def count_team_members(team_id: str) -> int:
 def list_team_members(team_id: str) -> list[User]:
     rows = _run("SELECT * FROM users WHERE team_id = ? ORDER BY created_at ASC", (team_id,), fetch_all=True)
     return [_row_to_user(r) for r in rows]
+
+
+# --- account deletion ---------------------------------------------------
+
+def delete_user(user_id: str) -> None:
+    """Permanently removes the account row (see main.py's
+    /me/delete-account). Called only after the caller has already verified
+    the password and confirmed no active subscription blocks it — this
+    function itself doesn't re-check anything, it just deletes. If this was
+    a team member, their team_id simply stops resolving to any row, which
+    is what frees their seat (teams.py's seat count is a live COUNT(*) over
+    this table, not a separate counter to decrement)."""
+    _run("DELETE FROM users WHERE id = ?", (user_id,))

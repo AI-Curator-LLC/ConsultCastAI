@@ -145,6 +145,9 @@
   .btn.ghost{background:transparent; border:1px solid var(--border); color:var(--text); box-shadow:none;}
   .btn.ghost:hover{border-color:var(--border-bright);}
   .btn.block{width:100%;}
+  .btn.danger{background:linear-gradient(135deg, #ff4f6d, #c0293f); box-shadow:0 0 26px rgba(255,79,109,0.3);}
+  .btn.ghost.danger{background:transparent; color:var(--danger); border-color:rgba(255,79,109,0.35); box-shadow:none;}
+  .btn.ghost.danger:hover{border-color:var(--danger);}
 
   /* --- Persistent 3-column layout --- */
   /* Side columns compress toward their floor (190px/210px) and the center
@@ -471,6 +474,10 @@
   .history-main .scenario{color:var(--text-dim); font-weight:500;}
   .history-meta{font-family:var(--font-mono); font-size:11px; color:var(--text-faint); white-space:nowrap; flex:none;}
   .history-detail{padding:15px; border-top:1px solid var(--border);}
+  .history-info{min-width:0;}
+  .history-actions{display:flex; gap:8px; flex:none;}
+  .history-actions .btn-sm.danger{color:var(--danger); border-color:rgba(255,79,109,0.35);}
+  .history-actions .btn-sm.danger:hover{border-color:var(--danger); color:var(--danger);}
 
   /* --- Profile --- */
   .profile-section-title{font-family:var(--font-display); font-size:14px; font-weight:700; margin:22px 0 14px; padding-top:18px; border-top:1px solid var(--border);}
@@ -808,7 +815,8 @@
       <p class="eyebrow">Your past sessions</p>
       <h2>Debrief History</h2>
       <div id="debriefHistoryList"><p class="history-empty">Loading…</p></div>
-      <div class="end-row">
+      <div class="end-row" style="display:flex; justify-content:space-between; gap:10px;">
+        <button class="btn ghost danger" id="deleteAllSessionsBtn" onclick="deleteAllSessions()">Delete all sessions</button>
         <button class="btn ghost" onclick="closeDebriefHistory()">Close</button>
       </div>
     </div>
@@ -866,6 +874,25 @@
       <p class="auth-error hidden" id="passwordChangeError"></p>
       <p class="auth-note success hidden" id="passwordChangeSuccess"></p>
       <button class="btn" id="changePasswordBtn" onclick="submitChangePassword()">Change password</button>
+
+      <p class="profile-section-title">Your data</p>
+      <p class="auth-note">Download a copy of everything tied to your account: profile, plan, and every session (debrief and transcript, where the transcript hasn't already been purged — see Data Retention below).</p>
+      <button class="btn ghost block" id="exportDataBtn" onclick="exportMyData()">Export my data</button>
+
+      <div id="dangerZoneSection">
+        <p class="profile-section-title" style="color:var(--danger);">Danger zone</p>
+        <p class="auth-note">Deletes your account, sessions, and usage records immediately — this cannot be undone. If you have an active subscription, cancel it first via Manage subscription.</p>
+        <div class="field">
+          <span class="field-label">Current password</span>
+          <input class="text-input" id="deleteAccountPasswordInput" type="password" autocomplete="current-password" />
+        </div>
+        <div class="field">
+          <span class="field-label">Type DELETE to confirm</span>
+          <input class="text-input" id="deleteAccountConfirmInput" placeholder="DELETE" />
+        </div>
+        <p class="auth-error hidden" id="deleteAccountError"></p>
+        <button class="btn danger block" id="deleteAccountBtn" onclick="submitDeleteAccount()">Delete my account permanently</button>
+      </div>
 
       <div class="end-row">
         <button class="btn ghost" onclick="closeProfile()">Close</button>
@@ -940,6 +967,12 @@
     <p style="font-size:11.5px; color:var(--text-faint); line-height:1.5; margin:0 0 22px;">
       Billed automatically at the interval selected, renews until canceled. Cancel anytime from Profile → Manage subscription — access continues through the period you've already paid for. On a Team plan, canceling ends access for every invited member, not just the owner.
     </p>
+    <!-- Still-pending accounts have no other way to reach Profile (this
+         screen fully covers the app underneath) — a pending user still
+         needs to be able to export or delete their own data (see Data
+         Retention, Deletion, and Export: verify_user-only, no approval
+         gate), so give them a way in rather than requiring approval first. -->
+    <button class="btn ghost block" onclick="openProfileFromPending()">Account settings</button>
     <button class="btn ghost block" onclick="logout()">Log out</button>
   </div>
 </div>
@@ -1427,6 +1460,9 @@ window.openProfile = async function(){
   document.getElementById('currentPasswordInput').value = '';
   document.getElementById('newPasswordInput').value = '';
   document.getElementById('confirmNewPasswordInput').value = '';
+  document.getElementById('deleteAccountPasswordInput').value = '';
+  document.getElementById('deleteAccountConfirmInput').value = '';
+  document.getElementById('deleteAccountError').classList.add('hidden');
   document.getElementById('profileScreen').classList.remove('hidden');
   document.getElementById('profileScreen').scrollIntoView({ behavior: 'smooth' });
   try{
@@ -1441,13 +1477,34 @@ window.openProfile = async function(){
     document.getElementById('profileResendBtn').classList.toggle('hidden', !!me.email_verified || !!me.dev_bypass);
     document.getElementById('profileNameInput').value = me.name || '';
     document.getElementById('profileCompanyInput').value = me.company || '';
+    // Account deletion needs a real password to check, which dev-bypass
+    // mode's synthetic "dev" user doesn't have — see /me/delete-account's
+    // explicit refusal for is_dev_bypass().
+    document.getElementById('dangerZoneSection').classList.toggle('hidden', !!me.dev_bypass);
   }catch(e){
     console.warn('Could not load profile:', e.message);
   }
 };
 
+// Set only when Profile was opened from the pending-approval screen (see
+// openProfileFromPending below) — pendingScreen is a full-page overlay that
+// covers the app underneath, so closing Profile in that case has to bring
+// it back rather than leaving the pending user looking at the bare app,
+// which they still can't actually use (see auth.require_approved).
+let profileOpenedFromPending = false;
+
+window.openProfileFromPending = function(){
+  profileOpenedFromPending = true;
+  hidePendingScreen();
+  openProfile();
+};
+
 window.closeProfile = function(){
   document.getElementById('profileScreen').classList.add('hidden');
+  if(profileOpenedFromPending){
+    profileOpenedFromPending = false;
+    showPendingScreen();
+  }
 };
 
 window.saveProfile = async function(){
@@ -1533,6 +1590,84 @@ window.submitChangePassword = async function(){
   }
 };
 
+// --- Export / delete account --------------------------------------------
+function downloadJson(filename, data){
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+window.exportMyData = async function(){
+  const btn = document.getElementById('exportDataBtn');
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Exporting…';
+  try{
+    const data = await api('/me/export');
+    downloadJson('consultcastai-my-data.json', data);
+  }catch(e){
+    alert('Could not export your data: ' + e.message);
+  }finally{
+    btn.disabled = false;
+    btn.textContent = original;
+  }
+};
+
+// Deliberately NOT using the shared api() helper: it treats every 401 as
+// "your session expired" and force-logs-out (handleUnauthorized()) —
+// exactly wrong here, where a 401 just means "the password you typed is
+// wrong", same rationale as _changePasswordRequest above.
+async function _deleteAccountRequest(password){
+  const headers = { 'Content-Type': 'application/json' };
+  if(TOKEN) headers['Authorization'] = 'Bearer ' + TOKEN;
+  const res = await fetch(API_BASE + '/me/delete-account', {
+    method: 'POST', headers,
+    body: JSON.stringify({ password }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if(!res.ok){
+    const err = new Error(body.detail || `${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
+  return body;
+}
+
+window.submitDeleteAccount = async function(){
+  const errEl = document.getElementById('deleteAccountError');
+  errEl.classList.add('hidden');
+  const password = document.getElementById('deleteAccountPasswordInput').value;
+  const confirmText = document.getElementById('deleteAccountConfirmInput').value.trim();
+  if(!password){
+    errEl.textContent = 'Enter your current password.';
+    errEl.classList.remove('hidden');
+    return;
+  }
+  if(confirmText !== 'DELETE'){
+    errEl.textContent = 'Type DELETE (all caps) to confirm.';
+    errEl.classList.remove('hidden');
+    return;
+  }
+  if(!window.confirm('Delete your account permanently? This cannot be undone.')) return;
+  const btn = document.getElementById('deleteAccountBtn');
+  btn.disabled = true;
+  try{
+    await _deleteAccountRequest(password);
+    clearToken();
+    location.reload(); // simplest full reset, same as logout()
+  }catch(e){
+    errEl.textContent = e.status === 401 ? 'Current password is incorrect.' : ('Could not delete account: ' + e.message);
+    errEl.classList.remove('hidden');
+    btn.disabled = false;
+  }
+};
+
 // --- Debrief History ---------------------------------------------------
 function formatDuration(sec){
   sec = Math.max(0, Math.round(sec || 0));
@@ -1596,7 +1731,24 @@ async function loadDebriefHistory(){
     const when = s.created_at ? new Date(s.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '';
     meta.textContent = `${when} · ${formatDuration(s.duration_sec)}`;
 
-    summary.append(main, meta);
+    const info = document.createElement('div');
+    info.className = 'history-info';
+    info.append(main, meta);
+
+    const actions = document.createElement('div');
+    actions.className = 'history-actions';
+    const downloadBtn = document.createElement('button');
+    downloadBtn.className = 'btn-sm';
+    downloadBtn.textContent = 'Download';
+    downloadBtn.title = 'Save this debrief as a text file';
+    downloadBtn.onclick = (e) => { e.stopPropagation(); downloadDebrief(s); };
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'btn-sm danger';
+    deleteBtn.textContent = 'Delete';
+    deleteBtn.onclick = (e) => { e.stopPropagation(); deleteOneSession(s.id); };
+    actions.append(downloadBtn, deleteBtn);
+
+    summary.append(info, actions);
 
     const detail = document.createElement('div');
     detail.className = 'history-detail debrief-body hidden';
@@ -1607,6 +1759,42 @@ async function loadDebriefHistory(){
     list.appendChild(row);
   });
 }
+
+// Generated in the browser from data already loaded (no extra endpoint) —
+// the debrief text is already sitting in the session object rendered above.
+function downloadDebrief(s){
+  const when = s.created_at ? new Date(s.created_at).toLocaleString() : '';
+  const text = `ConsultCastAI Debrief\n${s.persona_name} — ${s.scenario_title}\n${when} · ${formatDuration(s.duration_sec)}\n\n${s.debrief || '(no debrief available)'}\n`;
+  const blob = new Blob([text], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `consultcastai-debrief-${s.id}.txt`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+window.deleteOneSession = async function(sessionId){
+  if(!window.confirm('Delete this session? This cannot be undone.')) return;
+  try{
+    await api(`/sessions/${sessionId}`, { method: 'DELETE' });
+    loadDebriefHistory();
+  }catch(e){
+    alert('Could not delete session: ' + e.message);
+  }
+};
+
+window.deleteAllSessions = async function(){
+  if(!window.confirm('Delete ALL of your sessions? This cannot be undone.')) return;
+  try{
+    await api('/me/sessions', { method: 'DELETE' });
+    loadDebriefHistory();
+  }catch(e){
+    alert('Could not delete your sessions: ' + e.message);
+  }
+};
 
 // --- Pending Requests (admin only) --------------------------------------
 window.openPendingRequests = function(){
