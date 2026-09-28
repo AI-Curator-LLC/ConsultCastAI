@@ -360,12 +360,40 @@ actually been checked, not assumed.
 ## Voice, current state
 
 The frontend uses the browser's built-in Web Speech API (`SpeechRecognition`
-for mic input, `speechSynthesis` for the persona's voice) so the whole thing
-works end-to-end with zero avatar vendor setup. Wiring in Anam's live avatar
-is the next step once personas are published in Anam Lab: call
-`POST /avatar/session-token`, feed the token to Anam's client SDK, and send
-each `persona_reply` to Anam's `talk()` instead of (or alongside)
-`speechSynthesis`.
+for mic input, `speechSynthesis` for the persona's voice) as the zero-setup
+fallback for any persona without a published Anam avatar. A persona with
+`avatar_id`/`voice_id`/`avatar_model` set in `content.py` (currently only
+`carla_diaz`) gets the live Anam avatar automatically instead — no manual
+mode picker, `applyOutputMode()` decides per persona (see `/personas`'
+`has_avatar` field).
+
+### Cost controls for live avatar sessions
+
+Anam bills by the connected minute, so a live avatar session carries a real
+per-minute cost a voice-only one doesn't — both controls below are gated on
+`outputMode === 'avatar'` for exactly that reason (see `checkCostControls()`
+in `frontend/index.html`), and both are wall-clock (`Date.now()`) based, not
+a decrementing counter, so a tab backgrounded or a computer put to sleep
+mid-session self-corrects the instant it's next checked rather than losing
+track of real elapsed time. A `visibilitychange` listener forces that check
+immediately on wake, rather than waiting on a `setInterval` tick the browser
+may have throttled or suspended entirely while hidden.
+
+- **Hard time limit** (`HARD_LIMIT_SEC`, 30 min): ends the session
+  automatically through the exact same path as clicking End yourself — a
+  normal debrief, not an error — with a one-time warning
+  (`HARD_LIMIT_WARNING_AT_SEC`, 25 min) shown first.
+- **Idle disconnect** (`IDLE_TIMEOUT_SEC`, 5 min of no real speech captured
+  and no message sent): shows a "still there?" prompt, then disconnects the
+  avatar (reusing the manual Pause button's own code path, so Resume works
+  the normal way) if there's no reply — the button, actual speech, or a sent
+  message — within `IDLE_GRACE_SEC` (60s). Both timers stop entirely while
+  the session is paused (manually or via this same idle-disconnect), since
+  they only ever run from the same ticking interval pausing already clears.
+
+Tab close (`beforeunload`/`pagehide`) already released the Anam connection
+before this shipped; these two are the "session left running" cases that
+didn't otherwise have a ceiling.
 
 ## Ownership note
 

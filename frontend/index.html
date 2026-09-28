@@ -412,6 +412,10 @@
   .timer-row .gauge-label{font-weight:500; color:var(--text-dim); margin:0;}
   .timer-val{font-family:var(--font-display); font-size:20px; font-weight:600;}
   .timer-row .gauge-track{flex:1;}
+  .session-notice{border-color:rgba(255,184,77,0.35); background:rgba(255,184,77,0.07); display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;}
+  .session-notice p{margin:0; font-size:12.5px; color:var(--warn); line-height:1.4;}
+  .session-notice .btn-sm{border-color:rgba(255,184,77,0.4); color:var(--warn); flex:none;}
+  .session-notice .btn-sm:hover{border-color:var(--warn);}
 
   /* Key behavior traits / Common objections / Session goals */
   .chip-row{display:flex; flex-wrap:wrap; gap:6px; margin-top:10px;}
@@ -804,6 +808,15 @@
         </div>
       </div>
 
+      <!-- Cost-control notices for live avatar sessions: the 5-minutes-left
+           warning, and the "still there?" idle prompt. Hidden the rest of
+           the time. See HARD_LIMIT_SEC/IDLE_TIMEOUT_SEC and the idle-check
+           block inside updateTimerDisplay(). -->
+      <div class="card session-notice hidden" id="sessionNotice">
+        <p id="sessionNoticeText"></p>
+        <button class="btn-sm hidden" id="sessionNoticeBtn" onclick="dismissIdlePrompt()">Yes, still here</button>
+      </div>
+
       <div class="card">
         <div class="card-title"><span style="color:var(--purple-glow)">◎</span> Session Goals</div>
         <div class="goal-list" id="goalList">
@@ -1086,6 +1099,13 @@ let pausedAt = null;
 let sessionStartedAt = null;
 let timerInterval = null;
 
+// Cost-control state (see HARD_LIMIT_SEC/IDLE_TIMEOUT_SEC above) — all
+// reset per session in startSession()/resumeSession()/resetAll().
+let hardLimitWarningShown = false;
+let hardLimitEndTriggered = false;
+let lastActivityAt = null;   // wall-clock timestamp of the last real speech or sent message
+let idlePromptShownAt = null; // null = prompt not currently showing
+
 // Discrete zones, not a smooth gradient: green through 9:59, yellow from
 // 10:00, red from 13:00. The bar visually maxes out at 15:00 and stays
 // full/red past that — it doesn't cap or end the session, just stops
@@ -1093,6 +1113,23 @@ let timerInterval = null;
 const TIME_MAX_SEC = 15 * 60;
 const TIME_YELLOW_AT_SEC = 10 * 60;
 const TIME_RED_AT_SEC = 13 * 60;
+
+// Cost controls for live avatar sessions (Anam bills by the connected
+// minute) — both gated on outputMode === 'avatar', see applyOutputMode():
+// a voice-only session has no live per-minute connection to protect
+// against, so neither of these arms for one.
+// HARD_LIMIT: ends the session automatically, with the normal debrief (not
+// an error) — same code path as clicking End yourself. WARNING fires once,
+// a few minutes ahead of that.
+const HARD_LIMIT_SEC = 30 * 60;
+const HARD_LIMIT_WARNING_AT_SEC = 25 * 60;
+// IDLE: no real speech captured and no message sent for this long shows a
+// "still there?" prompt; GRACE is how long after that prompt before an
+// unanswered session auto-pauses (disconnects the avatar, same as the
+// manual Pause button — see idleDisconnect()). Any reply (the button,
+// speaking, or sending a message) within the grace window cancels it.
+const IDLE_TIMEOUT_SEC = 5 * 60;
+const IDLE_GRACE_SEC = 60;
 
 // Arms the ticking interval only — does NOT touch sessionStartedAt. A fresh
 // session sets that itself (see startSession) before calling this; resuming
@@ -1130,6 +1167,81 @@ function updateTimerDisplay(){
   fill.style.background = elapsedSec >= TIME_RED_AT_SEC ? 'var(--danger)'
     : elapsedSec >= TIME_YELLOW_AT_SEC ? 'var(--warn)'
     : 'var(--good)';
+
+  checkCostControls(elapsedSec);
+}
+
+// Hard time limit + idle disconnect for live avatar sessions. Only runs
+// from updateTimerDisplay()'s own tick, which stopTimer() already clears
+// during a pause — so both checks naturally stop entirely while paused,
+// with no separate flag needed for that. Gated on avatar mode: a voice-only
+// session has no live per-minute connection to protect against.
+function checkCostControls(elapsedSec){
+  if(outputMode !== 'avatar') return;
+
+  if(!hardLimitWarningShown && elapsedSec >= HARD_LIMIT_WARNING_AT_SEC){
+    hardLimitWarningShown = true;
+    showSessionNotice('5 minutes left in this session — it will end automatically at the 30-minute mark, with your debrief.');
+  }
+  if(!hardLimitEndTriggered && elapsedSec >= HARD_LIMIT_SEC){
+    hardLimitEndTriggered = true;
+    hideSessionNotice();
+    window.endSession(); // same path as clicking End yourself — normal debrief, not an error
+    return; // endSession() tears down the avatar itself; nothing left to idle-check
+  }
+
+  if(!lastActivityAt) return; // not armed yet (set by startSession/resumeSession)
+  const idleSec = Math.floor((Date.now() - lastActivityAt) / 1000);
+  if(!idlePromptShownAt){
+    if(idleSec >= IDLE_TIMEOUT_SEC){
+      idlePromptShownAt = Date.now();
+      showIdlePrompt();
+    }
+  } else if(Math.floor((Date.now() - idlePromptShownAt) / 1000) >= IDLE_GRACE_SEC){
+    idleDisconnect();
+  }
+}
+
+function showSessionNotice(text){
+  document.getElementById('sessionNoticeText').textContent = text;
+  document.getElementById('sessionNoticeBtn').classList.add('hidden');
+  document.getElementById('sessionNotice').classList.remove('hidden');
+}
+
+function hideSessionNotice(){
+  document.getElementById('sessionNotice').classList.add('hidden');
+}
+
+function showIdlePrompt(){
+  document.getElementById('sessionNoticeText').textContent = "Still there? The live avatar will disconnect in 60 seconds if there's no reply.";
+  document.getElementById('sessionNoticeBtn').classList.remove('hidden');
+  document.getElementById('sessionNotice').classList.remove('hidden');
+}
+
+// Any real activity counts as a reply: the button, actual captured speech
+// (recognizer.onresult), or sending a message (sendTurn) all call this.
+function dismissIdlePrompt(){
+  lastActivityAt = Date.now();
+  if(idlePromptShownAt){
+    idlePromptShownAt = null;
+    hideSessionNotice();
+  }
+}
+// This script is a module (see <script type="module">): a plain top-level
+// function declaration is only visible to other module-scoped code, never
+// to an inline onclick="" HTML attribute, which runs in the global scope.
+// #sessionNoticeBtn's onclick needs this exposed the same way every other
+// onclick-bound function in this file already is (window.foo = ...).
+window.dismissIdlePrompt = dismissIdlePrompt;
+
+// No reply within the grace window: disconnect the avatar (not a full
+// session end) — reuses pauseSession() exactly, so Resume works the normal
+// way. A distinct message replaces the idle prompt so it's clear why the
+// session paused itself.
+function idleDisconnect(){
+  idlePromptShownAt = null;
+  pauseSession();
+  showSessionNotice('Disconnected due to inactivity. Click Resume to reconnect the avatar and continue.');
 }
 
 // Static reference photos, generated per persona as they're created in
@@ -2367,6 +2479,11 @@ window.startSession = async function(){
     updateMeters(session.pressure, session.trust, session.specificity);
     addCoachEntry('neutral', 'Session started. Coaching appears after your first response.');
     sessionStartedAt = Date.now();
+    hardLimitWarningShown = false;
+    hardLimitEndTriggered = false;
+    lastActivityAt = Date.now();
+    idlePromptShownAt = null;
+    hideSessionNotice();
     startTimer();
     setComposerEnabled(true);
     document.getElementById('msgInput').placeholder = hasOpener
@@ -2543,6 +2660,23 @@ function stopAvatarAndCamera(){ stopAvatar(); stopSelfCamera(); }
 window.addEventListener('beforeunload', () => { if(anamActive) stopAvatarAndCamera(); });
 window.addEventListener('pagehide', () => { if(anamActive) stopAvatarAndCamera(); });
 
+// Cost-control safety net for the tab-backgrounded/computer-sleep case:
+// setInterval ticks (the hard-limit/idle checks in updateTimerDisplay, see
+// checkCostControls) can be throttled or entirely suspended by the browser
+// while hidden, sometimes for the whole duration of a sleep, and only
+// resume once the tab is visible again. All of that logic is wall-clock
+// (Date.now()) based rather than a decrementing counter, so it self-
+// corrects the instant it next runs — this listener just makes that
+// "instant" as prompt as possible on wake, instead of waiting for the next
+// throttled tick, so a limit that was already passed during sleep is
+// enforced (and the Anam connection released) right away rather than
+// however much later the browser would have otherwise gotten around to it.
+document.addEventListener('visibilitychange', () => {
+  if(document.visibilityState === 'visible' && sessionStartedAt && !sessionPaused){
+    updateTimerDisplay();
+  }
+});
+
 function currentPersonaId(){ return currentPersona ? currentPersona.id : null; }
 
 function elapsedStamp(){
@@ -2690,6 +2824,7 @@ window.sendTurn = async function(hintText){
   const text = (typeof hintText === 'string') ? hintText : input.value.trim();
   if(!text || !sessionId) return;
   input.value = '';
+  dismissIdlePrompt(); // a message was just sent — resets the idle clock
   appendMsg('user', 'You', text);
 
   setSendBusy(true);
@@ -2763,6 +2898,7 @@ function startListening(){
   recognizer.onresult = (e) => {
     document.getElementById('msgInput').value = e.results[0][0].transcript;
     document.getElementById('msgInput').focus();
+    dismissIdlePrompt(); // real speech was just captured — resets the idle clock even before Send is pressed
     // No auto-send: review/edit the transcript, then press Send yourself.
   };
   try{ recognizer.start(); }catch(e){ console.warn('Mic auto-start failed:', e); }
@@ -2813,6 +2949,16 @@ function pauseSession(){
   if('speechSynthesis' in window) window.speechSynthesis.cancel(); // stop any mid-sentence speech
   stopListening();
   setSessionPaused(true);
+  // Clear any in-progress idle prompt rather than leaving it pending: since
+  // the idle-check tick is stopped by stopTimer() above for the whole
+  // pause, an unresolved idlePromptShownAt would otherwise measure its 60s
+  // grace window against wall-clock time that includes however long the
+  // pause itself lasted, and could fire an idle-disconnect the instant this
+  // resumes even though the consultant was never actually idle for 60s of
+  // active session time. idleDisconnect() re-shows its own notice right
+  // after calling this, for the auto-pause case.
+  idlePromptShownAt = null;
+  hideSessionNotice();
 }
 
 function resumeSession(){
@@ -2826,6 +2972,8 @@ function resumeSession(){
     pausedAt = null;
   }
   setSessionPaused(false);
+  lastActivityAt = Date.now(); // resuming counts as "just here" — don't start the idle clock already primed to fire
+  hideSessionNotice();
   startTimer(); // resumes ticking from the correct (adjusted) elapsed point
   if(outputMode === 'avatar') startAvatar(); // a genuinely new Anam session/stream, not an unpause — same brief connect delay as starting fresh
   startListening(); // it's the consultant's turn again, same as after the persona finishes speaking
@@ -2882,6 +3030,11 @@ window.resetAll = function(){
   currentPersona = null;
   currentScenario = null;
   sessionStartedAt = null;
+  hardLimitWarningShown = false;
+  hardLimitEndTriggered = false;
+  lastActivityAt = null;
+  idlePromptShownAt = null;
+  hideSessionNotice();
   stopTimer();
   resetTimerDisplay();
   document.getElementById('debriefScreen').classList.add('hidden');
