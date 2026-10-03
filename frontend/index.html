@@ -163,8 +163,8 @@
 
   select{
     width:100%; background:var(--bg-panel-2); border:1px solid var(--border); color:var(--text);
-    padding:11px 13px; border-radius:10px; font-size:13.5px; font-family:var(--font-body);
-    cursor:pointer; appearance:none;
+    padding:11px 34px 11px 13px; border-radius:10px; font-size:13.5px; font-family:var(--font-body);
+    cursor:pointer; appearance:none; text-overflow:ellipsis;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%237c82ad'/%3E%3C/svg%3E");
     background-repeat:no-repeat; background-position:right 14px center;
   }
@@ -671,7 +671,7 @@
     <!-- FTC "click to cancel" disclosure: substance, not boilerplate — this
          is real auto-renewing billing, so how it renews and how to stop it
          has to be stated plainly right next to the buttons that start it. -->
-    <p class="fine-print">Billed automatically at the interval selected, renews until canceled. Cancel anytime from Profile → Manage subscription — access continues through the period you've already paid for. On a Team plan, canceling ends access for every invited member, not just the owner.</p>
+    <p class="fine-print">Billed automatically at the interval selected, renews until canceled. Cancel anytime from Manage subscription in the account menu (the round button at the top right). Access continues through the period you've already paid for. On a Team plan, canceling ends access for every invited member, not just the owner.</p>
     <button class="btn-sm hidden" id="trialUpgradeCloseBtn" onclick="closeTrialUpgrade()" style="margin-top:12px;">Not now</button>
   </div>
 
@@ -947,6 +947,8 @@
       <button class="btn" id="profileSaveBtn" onclick="saveProfile()">Save</button>
 
       <p class="profile-section-title">Change password</p>
+      <p class="auth-note hidden" id="passwordSuiteNote">You sign in through the AI Curator Consulting Suite, so your password is managed in your suite account.</p>
+      <div id="changePasswordForm">
       <div class="field">
         <span class="field-label">Current password</span>
         <input class="text-input" id="currentPasswordInput" type="password" autocomplete="current-password" />
@@ -962,6 +964,7 @@
       <p class="auth-error hidden" id="passwordChangeError"></p>
       <p class="auth-note success hidden" id="passwordChangeSuccess"></p>
       <button class="btn" id="changePasswordBtn" onclick="submitChangePassword()">Change password</button>
+      </div>
 
       <p class="profile-section-title">Your data</p>
       <p class="auth-note">Download a copy of everything tied to your account: profile, plan, and every session (debrief and transcript, where the transcript hasn't already been purged — see Data Retention below).</p>
@@ -1938,6 +1941,9 @@ window.openProfile = async function(){
     // With single sign-on on, the password lives at the suite: deleting is
     // confirmed by an emailed link instead (see emailDeleteAccountLink).
     const viaSuite = !!(SSO_STATE && SSO_STATE.enabled);
+    document.getElementById('changePasswordForm').classList.toggle('hidden', viaSuite);
+    document.getElementById('passwordSuiteNote').classList.toggle('hidden', !viaSuite);
+    document.getElementById('deleteAccountLinkBtn').textContent = viaSuite ? 'Email me a link to confirm' : 'Email me a link to confirm instead';
     document.getElementById('deleteAccountPasswordField').classList.toggle('hidden', viaSuite);
     document.getElementById('deleteAccountBtn').classList.toggle('hidden', viaSuite);
     document.getElementById('deleteAccountLinkNote').classList.toggle('hidden', !viaSuite);
@@ -1986,6 +1992,9 @@ window.saveProfile = async function(){
         company: document.getElementById('profileCompanyInput').value.trim() || null,
       }),
     });
+    // Keep the round account button's initial in step with the saved name.
+    const who = document.getElementById('profileNameInput').value.trim() || document.getElementById('profileEmail').textContent || '?';
+    document.getElementById('profileAvatar').textContent = who.charAt(0).toUpperCase();
     okEl.textContent = 'Saved.';
     okEl.classList.remove('hidden');
   }catch(e){
@@ -2588,7 +2597,7 @@ window.continueAfterVerifying = async function(){
 
 function onAuthenticated(me){
   const avatarEl = document.getElementById('profileAvatar');
-  avatarEl.textContent = (me.email || '?').charAt(0).toUpperCase();
+  avatarEl.textContent = ((me.name || '').trim() || me.email || '?').charAt(0).toUpperCase();
   avatarEl.title = me.email || '';
   document.getElementById('profileEmail').textContent = me.email || '';
   // Nothing to log out of in dev bypass (no real session), so no menu either.
@@ -2911,7 +2920,7 @@ window.startSession = async function(){
     }
     document.getElementById('coachFeed').innerHTML = '';
     updateMeters(session.pressure, session.trust, session.specificity);
-    addCoachEntry('neutral', 'Session started. Coaching appears after your first response.');
+    addCoachEntry('neutral', 'Session started. Coaching appears after your first response.', true);
     sessionStartedAt = Date.now();
     hardLimitWarningShown = false;
     hardLimitEndTriggered = false;
@@ -3192,18 +3201,19 @@ const COACH_CARD = {
   neutral: { icon: 'i', title: 'Keep Going' },
 };
 
-function addCoachEntry(kind, text){
+// unnumbered: the "Session started" card, which isn't a turn.
+function addCoachEntry(kind, text, unnumbered){
   const feed = document.getElementById('coachFeed');
   const empty = feed.querySelector('.coach-empty');
   if(empty) empty.remove();
   const card = COACH_CARD[kind] || COACH_CARD.neutral;
   const entry = document.createElement('div');
   entry.className = 'coach-entry ' + kind;
-  turnCount += 1;
+  if(!unnumbered) turnCount += 1;
   entry.innerHTML = `
     <div class="icon-badge">${card.icon}</div>
     <div class="coach-body">
-      <span class="turn-n">TURN ${turnCount}</span>
+      ${unnumbered ? '' : `<span class="turn-n">TURN ${turnCount}</span>`}
       <div class="coach-title">${card.title}</div>
       <div class="coach-desc">${escapeHtml(text)}</div>
     </div>`;
@@ -3514,6 +3524,8 @@ window.resetAll = function(){
   document.getElementById('debriefGoals').classList.add('hidden');
   setGoals(false, true);
   renderObjections(null);
+  document.getElementById('coachFeed').innerHTML = '<div class="coach-empty">Start a session to see live coaching here.</div>';
+  updateMeters('—', '—', '—'); // not a number, so setArc() empties the arcs too
   document.getElementById('personaSelect').disabled = false;
   document.getElementById('personaSelect').value = '';
   document.getElementById('callDirectionSelect').disabled = false;
