@@ -97,17 +97,32 @@ def require_owner(session_rep_id: str, user: AuthUser) -> None:
 
 def require_approved(user: AuthUser = Depends(verify_user)) -> AuthUser:
     """Layered on top of verify_user for every functional (product)
-    endpoint: a real, signed-in account whose signup hasn't been approved
-    yet gets a specific 403 here, distinct from verify_user's 401s, so the
-    frontend can show "pending approval" instead of "please log in again".
-    Not applied to /auth/me, /auth/verify, /auth/resend-verification, or
-    the password-reset endpoints — a pending account still needs those to
-    work while it waits."""
+    endpoint. Two ways a real, signed-in account is refused here, each with
+    its own code so the frontend can show the right screen instead of
+    "please log in again":
+
+    - verification_required: not approved yet. Approval is automatic, set
+      when the email is verified (users.mark_verified), so this means "click
+      the link we sent you", not "wait for someone".
+    - account_suspended: an admin suspended it. Checked first, and separate
+      from approval, so verifying or subscribing can't lift it.
+
+    Not applied to /auth/me, /auth/verify, /auth/resend-verification, the
+    password-reset endpoints, or export/delete: an unverified or suspended
+    account still needs those."""
     if _dev_bypass_enabled():
         return user  # nothing to approve in local dev bypass
     account = users.get_user_by_id(user.rep_id)
+    if account and account.suspended:
+        raise HTTPException(status_code=403, detail={
+            "code": "account_suspended",
+            "message": "This account has been suspended. Contact support if you think this is a mistake.",
+        })
     if not account or not account.approved:
-        raise HTTPException(status_code=403, detail="Your access request is still pending approval")
+        raise HTTPException(status_code=403, detail={
+            "code": "verification_required",
+            "message": "Verify your email to start using ConsultCastAI.",
+        })
     return user
 
 

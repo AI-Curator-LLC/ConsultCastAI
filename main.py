@@ -27,6 +27,7 @@ import claude_client
 import anam_client
 import content
 import coaching
+import disposable
 import emailer
 import minutes
 import retention
@@ -82,7 +83,7 @@ print(
 # Bump this string any time prompts.py changes and you need
 # to confirm a restart actually picked up the new files, rather than
 # guessing. Check the uvicorn startup log for this exact line.
-BUILD_MARKER = "ip-diag-v1"
+BUILD_MARKER = "auto-approve-v1"
 print(f"[consultcastai] BUILD MARKER: {BUILD_MARKER}")
 
 # Never prints the key itself, just whether one's configured and which
@@ -128,13 +129,29 @@ app.add_middleware(
 # legitimate logins) or it silently limits nothing at all — this is the
 # single most common way rate limiting looks fine locally and does nothing
 # once deployed.
+#
+# Which header, though, matters just as much. X-Forwarded-For is a list each
+# proxy appends to, and its first entry is whatever the client chose to
+# send: a request with a made-up "X-Forwarded-For: 1.2.3.4" arrived here
+# with that as the first entry (and as request.client.host, which uvicorn
+# derives from the same header), so keying on it let anyone reset their own
+# limit on every request. Checked against the live deploy, not assumed.
+# CF-Connecting-IP is set by Cloudflare, which fronts every Render service,
+# to the address that actually connected to it; a client can't supply its
+# own (Cloudflare rejects the request outright). Local dev has no proxy and
+# no such header, so it falls back to the socket address.
 def get_real_ip(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()  # first entry is the original client
+    cf_ip = request.headers.get("cf-connecting-ip")
+    if cf_ip:
+        return cf_ip.strip()
     return get_remote_address(request)
 
 limiter = Limiter(key_func=get_real_ip)
+
+# Accounts created per IP per rolling 24 hours (see users.record_signup).
+# Counts accounts that were actually created, so it's separate from the
+# request-rate limit on the signup route, which counts every attempt.
+SIGNUPS_PER_IP_PER_DAY = int(os.environ.get("SIGNUPS_PER_IP_PER_DAY", "3"))
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -174,11 +191,15 @@ def _issue_or_500(user: users.User) -> str:
 
 
 @app.post("/auth/signup")
-@limiter.limit("3/hour")
+@limiter.limit("10/hour")  # every attempt, including ones that fail validation; accounts actually created are capped separately at SIGNUPS_PER_IP_PER_DAY below
 def signup(req: SignupRequest, background_tasks: BackgroundTasks, request: Request):
     email = users.normalize_email(req.email)
     if not users.is_valid_email(email):
         raise HTTPException(400, "Invalid email address")
+    # A verified email is what approves an account and what the one-per-
+    # email trial hangs on, so a throwaway inbox is refused outright.
+    if disposable.is_disposable(email):
+        raise HTTPException(400, "Please use a permanent email address. Disposable email services aren't accepted.")
     problem = users.password_problem(req.password)
     if problem:
         raise HTTPException(400, problem)
@@ -201,11 +222,26 @@ def signup(req: SignupRequest, background_tasks: BackgroundTasks, request: Reque
         if users.count_team_members(team.id) >= team.seat_limit:
             raise HTTPException(400, f"This team is at its {team.seat_limit}-seat limit")
 
+    # Accounts per IP per day. Checked last, right before creating one, so
+    # only a signup that would otherwise have succeeded counts against it.
+    # Joining a team by invite is exempt: a whole team signing up from one
+    # office shares an address, and every one of them was invited by a
+    # paying owner.
+    client_ip = get_real_ip(request)
+    if not invite and users.count_recent_signups(client_ip) >= SIGNUPS_PER_IP_PER_DAY:
+        raise HTTPException(429, "Too many accounts have been created from this network today. Please try again tomorrow.")
+
     verification_token = secrets.token_urlsafe(32)
     try:
         user = users.create_user(email, users.hash_password(req.password), verification_token)
     except users.EmailTaken:
         raise HTTPException(409, "An account with this email already exists")
+    if not invite:
+        users.record_signup(client_ip)
+    # This email's last account was suspended when it was deleted: the new
+    # one starts suspended too (see users.remember_suspended_email).
+    if users.email_was_suspended(email):
+        users.set_suspended(user.id, True)
 
     if invite:
         # Joining an already-subscribed team: no Checkout, no separate
@@ -328,7 +364,7 @@ def me(user: auth.AuthUser = Depends(auth.verify_user)):
         return {
             "email": user.email, "email_verified": True, "dev_bypass": True,
             "created_at": None, "name": None, "company": None,
-            "is_admin": True, "approved": True,
+            "is_admin": True, "approved": True, "suspended": False,
             "team_id": None, "is_team_owner": False,
             "trial": None,
         }
@@ -343,6 +379,7 @@ def me(user: auth.AuthUser = Depends(auth.verify_user)):
         "email": account.email, "email_verified": account.email_verified, "dev_bypass": False,
         "created_at": account.created_at, "name": account.name, "company": account.company,
         "is_admin": account.is_admin, "approved": account.approved,
+        "suspended": account.suspended,
         "team_id": account.team_id, "is_team_owner": is_team_owner,
         # None unless this is a trial account; drives the "N of 30 trial
         # minutes left" counter and the upgrade prompt.
@@ -358,8 +395,65 @@ def list_pending_requests(user: auth.AuthUser = Depends(auth.require_admin)):
 
 @app.post("/auth/approve/{user_id}")
 def approve_user(user_id: str, admin: auth.AuthUser = Depends(auth.require_admin)):
-    users.set_approved(user_id, True)
+    """Approval is automatic on email verification; this is the override for
+    when a verification email never arrives. An admin vouching for the
+    address counts as verifying it, so it does exactly what clicking the
+    link would have."""
+    if not users.get_user_by_id(user_id):
+        raise HTTPException(404, "Account not found")
+    users.mark_verified(user_id)
     return {"message": "Approved"}
+
+
+def _plan_label(u: users.User) -> str:
+    if u.is_admin:
+        return "Admin"
+    if u.team_id:
+        return "Team"
+    if u.subscription_status:
+        return f"Pro ({u.subscription_status})"
+    return "Trial"
+
+
+@app.get("/admin/accounts")
+def list_accounts(admin: auth.AuthUser = Depends(auth.require_admin)):
+    """Every account, newest first, for the admin accounts view: who has
+    signed up, whether they've verified, and the suspend control."""
+    return [
+        {
+            "id": u.id, "email": u.email, "created_at": u.created_at,
+            "email_verified": u.email_verified, "approved": u.approved,
+            "suspended": u.suspended, "is_admin": u.is_admin,
+            "plan": _plan_label(u),
+            "practice_minutes": store.get_total_seconds(u.id) // 60,
+        }
+        for u in users.list_all()
+    ]
+
+
+@app.post("/admin/accounts/{user_id}/suspend")
+def suspend_account(user_id: str, admin: auth.AuthUser = Depends(auth.require_admin)):
+    """Blocks the account from everything except logging in, exporting its
+    data and deleting itself (auth.require_approved). Doesn't touch billing:
+    a suspended subscriber keeps being charged until the subscription is
+    canceled in Stripe."""
+    target = users.get_user_by_id(user_id)
+    if not target:
+        raise HTTPException(404, "Account not found")
+    if target.is_admin:
+        raise HTTPException(400, "Admin accounts can't be suspended")
+    users.set_suspended(user_id, True)
+    return {"message": "Suspended"}
+
+
+@app.post("/admin/accounts/{user_id}/unsuspend")
+def unsuspend_account(user_id: str, admin: auth.AuthUser = Depends(auth.require_admin)):
+    target = users.get_user_by_id(user_id)
+    if not target:
+        raise HTTPException(404, "Account not found")
+    users.set_suspended(user_id, False)
+    users.forget_suspended_email(target.email)  # in case this account inherited it from a deleted one
+    return {"message": "Unsuspended"}
 
 
 @app.patch("/auth/profile")
@@ -381,25 +475,10 @@ def change_password(req: ChangePasswordRequest, user: auth.AuthUser = Depends(au
 
 
 @app.get("/version")
-def version(request: Request):
+def version():
     """Which build is running, so "has the deploy landed?" can be answered
-    from outside without reading the server log.
-
-    TEMPORARY: also echoes back the caller's own address headers, to find
-    out which one carries the real client IP behind Render's proxies (the
-    leftmost X-Forwarded-For entry turned out to be client-controlled).
-    Removed again once get_real_ip is fixed."""
-    h = request.headers
-    return {
-        "build": BUILD_MARKER,
-        "seen": {
-            "client_host": request.client.host if request.client else None,
-            "x_forwarded_for": h.get("x-forwarded-for"),
-            "cf_connecting_ip": h.get("cf-connecting-ip"),
-            "true_client_ip": h.get("true-client-ip"),
-            "x_real_ip": h.get("x-real-ip"),
-        },
-    }
+    from outside without reading the server log. Nothing but the marker."""
+    return {"build": BUILD_MARKER}
 
 
 @app.get("/personas")
@@ -446,9 +525,17 @@ def create_checkout_session(req: CheckoutRequest, user: auth.AuthUser = Depends(
     checkout in the first place — subscribing is one of the two ways an
     account becomes approved (the other being manual admin approval), see
     the webhook below. Gating this on require_approved would make that
-    path unreachable."""
+    path unreachable. (Approval is otherwise automatic on email
+    verification; subscribing first still works and still approves.)"""
     if not stripe.api_key:
         raise HTTPException(500, "Billing is not configured")
+    # Subscribing doesn't lift a suspension, so don't take the money.
+    payer = None if auth.is_dev_bypass() else users.get_user_by_id(user.rep_id)
+    if payer and payer.suspended:
+        raise HTTPException(status_code=403, detail={
+            "code": "account_suspended",
+            "message": "This account has been suspended. Contact support if you think this is a mistake.",
+        })
     price_id = _STRIPE_PLAN_PRICE_IDS.get(req.plan)
     if not price_id:
         # Also catches a real plan name whose specific STRIPE_PRICE_* env var
@@ -527,6 +614,8 @@ def invite_teammate(req: InviteRequest, background_tasks: BackgroundTasks, user:
     email = users.normalize_email(req.email)
     if not users.is_valid_email(email):
         raise HTTPException(400, "Invalid email address")
+    if disposable.is_disposable(email):  # signup would refuse it anyway; say so now rather than send a dead invite
+        raise HTTPException(400, "That's a disposable email address. Invite a permanent one.")
     if users.get_user_by_email(email):
         raise HTTPException(409, "That email already has an account")
     if users.count_team_members(team.id) >= team.seat_limit:
@@ -1030,6 +1119,9 @@ def delete_account(req: DeleteAccountRequest, user: auth.AuthUser = Depends(auth
     if minutes.is_trial(account) and store.get_total_seconds(account.id) > 0:
         users.record_trial_used(account)
     users.detach_trial_record(account.id)
+    # Same idea for a suspension: deleting the account isn't a way out of it.
+    if account.suspended:
+        users.remember_suspended_email(account.email)
 
     store.delete_for_rep(account.id)
     store.delete_usage_records_for_rep(account.id)

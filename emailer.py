@@ -106,20 +106,21 @@ def send_password_reset_email(to_email: str, token: str) -> None:
 
 
 def send_admin_notification_email(new_user_email: str) -> None:
-    """Best-effort "someone signed up and needs approval" notice. Silently
-    does nothing if CONSULTCASTAI_ADMIN_EMAIL isn't set — this is a
-    convenience, not the source of truth; the pending list (GET
-    /auth/pending) always has the real, current answer regardless of
-    whether this ever sends."""
+    """Best-effort "someone signed up" notice. Purely informational now:
+    the account approves itself when the email is verified, nothing is
+    waiting on the admin. Silently does nothing if CONSULTCASTAI_ADMIN_EMAIL
+    isn't set; the accounts view (GET /admin/accounts) always has the real,
+    current list regardless of whether this ever sends."""
     admin_email = os.environ.get("CONSULTCASTAI_ADMIN_EMAIL", "").strip()
     if not admin_email:
         return
     _send(
         admin_email,
-        "New ConsultCastAI signup awaiting approval",
-        f"<p>{new_user_email} just signed up and is waiting for approval.</p>"
-        "<p>Log in and open Profile → Pending Requests to approve it.</p>",
-        dev_log_link="(no link for this one — approve from the app's Pending Requests panel)",
+        "New ConsultCastAI signup",
+        f"<p>{new_user_email} just signed up.</p>"
+        "<p>No action needed: the account gets access automatically once they verify their email.</p>"
+        "<p>To suspend it, log in and open Profile → Accounts.</p>",
+        dev_log_link="(no link for this one, it's informational; accounts are listed under Profile -> Accounts)",
         what="admin signup notification",
     )
 

@@ -74,9 +74,10 @@ class User:
     name: str | None = None
     company: str | None = None
     # Access gate: a signed-up account can't use any functional endpoint
-    # until an admin approves it (see require_approved in auth.py). New
-    # rows default to False; existing/admin rows are flipped to True by
-    # the migration in _ensure_schema below.
+    # until it's approved (see require_approved in auth.py). Approval is
+    # automatic: verifying the email sets it (mark_verified), as do
+    # subscribing, accepting a team invite, and being the bootstrap admin.
+    # There's no manual approval step any more.
     approved: bool = False
     # Billing: real recurring Stripe subscriptions (see require_active_plan
     # in auth.py). plan_tier is a display/bookkeeping label ("pro", later
@@ -93,6 +94,10 @@ class User:
     # gets this set, to their own team — they count as one of its seats,
     # not tracked separately.
     team_id: str | None = None
+    # Set by an admin (see /admin/accounts in main.py). Separate from
+    # approved on purpose: nothing that grants approval (verifying,
+    # subscribing) lifts a suspension, only an admin does.
+    suspended: bool = False
 
 
 # --- passwords -------------------------------------------------------------
@@ -191,7 +196,8 @@ CREATE TABLE IF NOT EXISTS users (
     current_period_end TEXT,
     stripe_customer_id TEXT,
     stripe_subscription_id TEXT,
-    team_id TEXT
+    team_id TEXT,
+    suspended INTEGER NOT NULL DEFAULT 0
 )
 """
 
@@ -215,7 +221,8 @@ CREATE TABLE IF NOT EXISTS users (
     current_period_end TIMESTAMPTZ,
     stripe_customer_id TEXT,
     stripe_subscription_id TEXT,
-    team_id TEXT
+    team_id TEXT,
+    suspended BOOLEAN NOT NULL DEFAULT FALSE
 )
 """
 
@@ -236,6 +243,7 @@ _ADDED_COLUMNS = [
     ("stripe_customer_id", "TEXT"),
     ("stripe_subscription_id", "TEXT"),
     ("team_id", "TEXT"),
+    ("suspended", "BOOLEAN NOT NULL DEFAULT FALSE"),
 ]
 
 # Which emails have already had a trial (see the "trial records" section
@@ -246,6 +254,24 @@ _TRIAL_RECORDS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS trial_records (
     email_hash TEXT PRIMARY KEY,
     user_id TEXT,
+    created_at TEXT NOT NULL
+)
+"""
+
+# One row per account created, for the signups-per-IP-per-day limit. The IP
+# is stored as a keyed hash, the same way trial_records stores an email.
+_SIGNUP_EVENTS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS signup_events (
+    ip_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL
+)
+"""
+
+# Emails whose account was suspended when it was deleted (see the
+# "suspension" section below). Keyed hash, never the email.
+_SUSPENDED_EMAILS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS suspended_emails (
+    email_hash TEXT PRIMARY KEY,
     created_at TEXT NOT NULL
 )
 """
@@ -289,6 +315,8 @@ def _ensure_schema() -> None:
             cur = conn.cursor()
             cur.execute(_SQLITE_SCHEMA if _LOCAL else _POSTGRES_SCHEMA)
             cur.execute(_TRIAL_RECORDS_SCHEMA)
+            cur.execute(_SIGNUP_EVENTS_SCHEMA)
+            cur.execute(_SUSPENDED_EMAILS_SCHEMA)
             if _LOCAL:
                 cur.execute("PRAGMA table_info(users)")
                 existing = {row["name"] for row in cur.fetchall()}
@@ -322,6 +350,13 @@ def _ensure_schema() -> None:
                     _sql("UPDATE users SET is_admin = ?, approved = ? WHERE email = ?"),
                     (True, True, normalize_email(bootstrap_email)),
                 )
+            # 3. Approval is automatic on email verification now. Accounts
+            #    that had already verified but were still waiting on a
+            #    manual approval when that changed are approved here;
+            #    anyone still unverified is approved the moment they verify
+            #    (mark_verified). Doesn't touch suspended, which is its own
+            #    column, so this can never un-suspend anyone.
+            cur.execute(_sql("UPDATE users SET approved = ? WHERE email_verified = ? AND approved = ?"), (True, True, False))
             conn.commit()
         finally:
             conn.close()
@@ -364,6 +399,7 @@ def _row_to_user(row) -> User | None:
         stripe_customer_id=row["stripe_customer_id"],
         stripe_subscription_id=row["stripe_subscription_id"],
         team_id=row["team_id"],
+        suspended=bool(row["suspended"]),
     )
 
 
@@ -400,8 +436,10 @@ def get_user_by_verification_token(token: str) -> User | None:
 
 
 def mark_verified(user_id: str) -> None:
-    # Clearing the token makes each link single-use.
-    _run("UPDATE users SET email_verified = ?, verification_token = NULL WHERE id = ?", (True, user_id))
+    """Verifying the email is what approves an account: there is no manual
+    approval step. Clearing the token makes each link single-use. Leaves
+    suspended alone."""
+    _run("UPDATE users SET email_verified = ?, approved = ?, verification_token = NULL WHERE id = ?", (True, True, user_id))
 
 
 def create_verification_token(user_id: str) -> str:
@@ -473,11 +511,12 @@ def get_user_by_reset_token(token: str) -> User | None:
 def reset_password(user_id: str, new_password_hash: str) -> None:
     """Sets the new password, consumes the reset token, and bumps
     token_version so every existing login token stops working. Also marks the
-    email verified: having received the reset link proves control of the inbox."""
+    email verified (and so approved, same as mark_verified): having received
+    the reset link proves control of the inbox."""
     _run(
         "UPDATE users SET password_hash = ?, reset_token_hash = NULL, reset_token_expires = NULL, "
-        "token_version = token_version + 1, email_verified = ?, verification_token = NULL WHERE id = ?",
-        (new_password_hash, True, user_id),
+        "token_version = token_version + 1, email_verified = ?, approved = ?, verification_token = NULL WHERE id = ?",
+        (new_password_hash, True, True, user_id),
     )
 
 
@@ -522,9 +561,15 @@ def promote_if_admin_bootstrap(user_id: str, email: str) -> bool:
     return True
 
 
+def list_all() -> list[User]:
+    """Every account, newest first: the admin accounts view."""
+    rows = _run("SELECT * FROM users ORDER BY created_at DESC", fetch_all=True)
+    return [_row_to_user(r) for r in rows]
+
+
 def list_pending() -> list[User]:
-    """Accounts still waiting on admin approval, oldest request first (so
-    whoever's been waiting longest shows at the top)."""
+    """Accounts not approved yet, which now means not verified yet, oldest
+    first."""
     rows = _run("SELECT * FROM users WHERE approved = ? ORDER BY created_at ASC", (False,), fetch_all=True)
     return [_row_to_user(r) for r in rows]
 
@@ -638,9 +683,13 @@ class TrialRecord:
     created_at: str
 
 
-def trial_email_hash(email: str) -> str:
+def _keyed_hash(value: str) -> str:
     key = os.environ.get(_TRIAL_HASH_KEY_ENV, "").strip() or _jwt_secret()
-    return hmac.new(key.encode(), normalize_email(email).encode(), hashlib.sha256).hexdigest()
+    return hmac.new(key.encode(), value.encode(), hashlib.sha256).hexdigest()
+
+
+def trial_email_hash(email: str) -> str:
+    return _keyed_hash(normalize_email(email))
 
 
 def record_trial_used(user: User) -> None:
@@ -665,3 +714,61 @@ def detach_trial_record(user_id: str) -> None:
     """Account deletion: the record stays, its link to the account doesn't.
     What's left is the hash and a date."""
     _run("UPDATE trial_records SET user_id = NULL WHERE user_id = ?", (user_id,))
+
+
+# --- suspension -----------------------------------------------------------
+# An admin can suspend any non-admin account (see /admin/accounts in
+# main.py). A suspended account can still log in, export its data and delete
+# itself, but nothing else (auth.require_approved).
+#
+# Deleting a suspended account and signing up again with the same email
+# would otherwise be a way out of it, so deletion leaves a keyed hash of the
+# email in suspended_emails and a new account on that email starts
+# suspended. Unsuspending that account clears the hash.
+
+def set_suspended(user_id: str, suspended: bool) -> None:
+    _run("UPDATE users SET suspended = ? WHERE id = ?", (suspended, user_id))
+
+
+def remember_suspended_email(email: str) -> None:
+    _run(
+        "INSERT INTO suspended_emails (email_hash, created_at) VALUES (?, ?) ON CONFLICT (email_hash) DO NOTHING",
+        (trial_email_hash(email), datetime.now(timezone.utc).isoformat()),
+    )
+
+
+def email_was_suspended(email: str) -> bool:
+    row = _run("SELECT email_hash FROM suspended_emails WHERE email_hash = ?", (trial_email_hash(email),), fetch_one=True)
+    return row is not None
+
+
+def forget_suspended_email(email: str) -> None:
+    _run("DELETE FROM suspended_emails WHERE email_hash = ?", (trial_email_hash(email),))
+
+
+# --- signups per IP ---------------------------------------------------------
+# Counts accounts actually created, not attempts: a typo'd password or an
+# address that's already taken doesn't use up someone's allowance. Kept in
+# the database rather than in memory so a restart or redeploy doesn't reset
+# it. Rows older than the window are dropped whenever a new one is written.
+
+SIGNUP_WINDOW = timedelta(hours=24)
+
+
+def _ip_hash(ip: str) -> str:
+    return _keyed_hash("ip:" + ip)
+
+
+def count_recent_signups(ip: str) -> int:
+    cutoff = (datetime.now(timezone.utc) - SIGNUP_WINDOW).isoformat()
+    row = _run(
+        "SELECT COUNT(*) AS n FROM signup_events WHERE ip_hash = ? AND created_at >= ?",
+        (_ip_hash(ip), cutoff), fetch_one=True,
+    )
+    return int(row["n"]) if row else 0
+
+
+def record_signup(ip: str) -> None:
+    now = datetime.now(timezone.utc)
+    _run("DELETE FROM signup_events WHERE created_at < ?", ((now - SIGNUP_WINDOW).isoformat(),))
+    _run("INSERT INTO signup_events (ip_hash, created_at) VALUES (?, ?)", (_ip_hash(ip), now.isoformat()))
