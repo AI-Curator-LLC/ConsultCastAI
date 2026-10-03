@@ -357,6 +357,70 @@ the job has actually run against production data at least once, generated
 you added, and Render's real log/snapshot retention for backups have
 actually been checked, not assumed.
 
+## Trial and minutes tracking
+
+An approved account that has never subscribed is a trial account
+(`minutes.is_trial`): not an admin, not a team member, and not a former
+subscriber, who gets the "subscribe" message rather than a second trial.
+Approval still comes first; a trial is what an approved account gets until
+it subscribes.
+
+| Rule | Value |
+|---|---|
+| Trial practice time in total | `TRIAL_TOTAL_MINUTES` (30) |
+| Longest single trial session | `TRIAL_SESSION_MINUTES` (10), or whatever is left of the trial if that's less |
+| Warning before a trial session ends | `TRIAL_WARNING_SECONDS` (60) |
+| Trial counts as used up | less than a minute left (the counter reads in whole minutes) |
+| Email verification | required before any account's first session |
+| Paid plans | not limited on minutes; tracked per user, and per team for team members |
+
+All of it is env vars in `minutes.py`, declared in `render.yaml`.
+
+**Where the time comes from.** The server's own clock, never the browser.
+Each session record carries its clock (`run_since`, `run_sec`,
+`paused_at`, `ended_at`): it starts when the server creates the session,
+stops on `POST /sessions/{id}/pause` or `/end`, restarts on `/resume`. Every
+`/turn` settles what has run so far into the ledger (`minutes.settle`), so a
+session that is never formally ended (tab closed, browser crashed) has
+still been charged up to its last exchange. A paused session refuses turns,
+so pausing can't be used to practice off the clock.
+
+**Where it's kept.** In the usage store (`store.add_seconds`,
+`seconds_used` on the same per-owner, per-month record as `session_count`),
+keyed by user id, and also by team id for a team member. Not on the
+session, so deleting a session, or the retention job deleting it later,
+doesn't give the time back. Clearing the browser changes nothing: the
+counter is just `/auth/me`'s `trial` field. Only deleting the whole account
+removes its ledger rows.
+
+**Enforcement.** `auth.require_active_plan` refuses a new session with a
+402 `trial_exhausted` once the trial is used up, and a 403
+`email_unverified` if the account has no sessions yet and hasn't verified
+(accounts that were already practicing before this shipped are exempt, so
+nobody is locked out by it). `/turn` refuses with a 402
+`trial_session_limit` once a trial session is past its limit plus
+`TRIAL_TURN_GRACE_SECONDS`, before any Claude call. Time past a session's
+limit is never charged, so a slow request or a tab left open can't cost a
+trial more than the session's limit.
+
+**Frontend.** The header shows "18 of 30 trial minutes left" on the start
+screen and through the session, counting down live; a pinned copy appears
+while the header is scrolled out of view mid-session. A trial session warns
+at one minute left and ends itself at the limit through the same path as
+the End button, so it finishes with a normal debrief. When the trial is
+used up, Start is disabled and an upgrade prompt offers Pro checkout.
+`/sessions`, `/end`, and `/pause` all return the updated `trial` status, so
+the counter never needs a second request.
+
+Session duration (`duration_sec`) now comes from the same persisted clock
+rather than an in-memory start time, so a restart or redeploy mid-session
+no longer zeroes it.
+
+Known limits, deliberately left: deleting an account and signing up again
+gets a fresh trial (each new account still needs approval); two sessions
+started at the same moment in two tabs each get their own limit; and time
+between the last exchange and closing the tab without ending isn't charged.
+
 ## Voice, current state
 
 The frontend uses the browser's built-in Web Speech API (`SpeechRecognition`
@@ -382,7 +446,9 @@ may have throttled or suspended entirely while hidden.
 - **Hard time limit** (`HARD_LIMIT_SEC`, 30 min): ends the session
   automatically through the exact same path as clicking End yourself — a
   normal debrief, not an error — with a one-time warning
-  (`HARD_LIMIT_WARNING_AT_SEC`, 25 min) shown first.
+  (`HARD_LIMIT_WARNING_AT_SEC`, 25 min) shown first. A trial session's own
+  shorter limit (see "Trial and minutes tracking") takes its place, and
+  applies in voice mode too.
 - **Idle disconnect** (`IDLE_TIMEOUT_SEC`, 5 min of no real speech captured
   and no message sent): shows a "still there?" prompt, then disconnects the
   avatar (reusing the manual Pause button's own code path, so Resume works
