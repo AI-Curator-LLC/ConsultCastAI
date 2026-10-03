@@ -82,7 +82,7 @@ print(
 # Bump this string any time prompts.py changes and you need
 # to confirm a restart actually picked up the new files, rather than
 # guessing. Check the uvicorn startup log for this exact line.
-BUILD_MARKER = "trial-email-record-v1"
+BUILD_MARKER = "ip-diag-v1"
 print(f"[consultcastai] BUILD MARKER: {BUILD_MARKER}")
 
 # Never prints the key itself, just whether one's configured and which
@@ -381,10 +381,25 @@ def change_password(req: ChangePasswordRequest, user: auth.AuthUser = Depends(au
 
 
 @app.get("/version")
-def version():
+def version(request: Request):
     """Which build is running, so "has the deploy landed?" can be answered
-    from outside without reading the server log. Nothing but the marker."""
-    return {"build": BUILD_MARKER}
+    from outside without reading the server log.
+
+    TEMPORARY: also echoes back the caller's own address headers, to find
+    out which one carries the real client IP behind Render's proxies (the
+    leftmost X-Forwarded-For entry turned out to be client-controlled).
+    Removed again once get_real_ip is fixed."""
+    h = request.headers
+    return {
+        "build": BUILD_MARKER,
+        "seen": {
+            "client_host": request.client.host if request.client else None,
+            "x_forwarded_for": h.get("x-forwarded-for"),
+            "cf_connecting_ip": h.get("cf-connecting-ip"),
+            "true_client_ip": h.get("true-client-ip"),
+            "x_real_ip": h.get("x-real-ip"),
+        },
+    }
 
 
 @app.get("/personas")
