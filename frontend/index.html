@@ -53,6 +53,25 @@
   .live-pill{display:inline-flex; align-items:center; gap:8px; padding:7px 14px; border-radius:10px; font-size:13px; font-weight:600;
     color:var(--good); background:rgba(51,230,165,0.08); border:1px solid rgba(51,230,165,0.4);}
   .live-pill::before{content:''; width:7px; height:7px; border-radius:50%; background:var(--good); box-shadow:0 0 8px var(--good);}
+  /* Trial counter: sits in the header so it's on screen both on the start
+     screen and all the way through a session. */
+  .trial-pill{padding:7px 14px; border-radius:10px; font-size:13px; font-weight:600; white-space:nowrap;
+    color:var(--purple-glow); background:rgba(155,92,255,0.08); border:1px solid rgba(155,92,255,0.4);}
+  .trial-pill.low{color:var(--warn); background:rgba(255,184,77,0.08); border-color:rgba(255,184,77,0.45);}
+  .trial-pill.out{color:#ff8ea1; background:rgba(255,79,109,0.08); border-color:rgba(255,79,109,0.45);}
+  /* The header scrolls away with the page, and a session's page is taller
+     than the screen on a phone. This copy of the counter is pinned to the
+     top of the viewport and shown only while a session is running AND the
+     header one is scrolled out of view, so the count is on screen the
+     whole session without sitting on top of the header when it's visible. */
+  .trial-pill-float{position:fixed; top:10px; left:50%; transform:translateX(-50%); z-index:40;
+    background:var(--bg-panel-2); box-shadow:0 8px 24px rgba(0,0,0,0.5);}
+  .trial-pill-float.low{background:var(--bg-panel-2);}
+  .trial-pill-float.out{background:var(--bg-panel-2);}
+  .trial-upgrade{margin:0 0 16px; border-color:rgba(155,92,255,0.45);}
+  .trial-upgrade h2{margin-bottom:6px;}
+  .trial-upgrade .upgrade-actions{display:flex; gap:10px; flex-wrap:wrap; margin:12px 0 10px;}
+  .trial-upgrade .fine-print{font-size:11.5px; color:var(--text-faint); line-height:1.5; margin:0;}
   .timer-pill{padding:7px 14px; border-radius:10px; font-family:var(--font-display); font-size:15px; font-weight:600;
     background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.12);}
   /* Connection status pill: outlined, dark fill. Neutral while connecting /
@@ -588,6 +607,7 @@
     </div>
     <div class="conn">
       <span class="live-pill hidden" id="livePill">Live</span>
+      <span class="trial-pill hidden" id="trialPill" role="status"></span>
       <span class="timer-pill hidden" id="headerTimer">0:00</span>
       <span class="badge" id="statusBadge">connecting</span>
       <div class="adv-panel" id="advPanel">
@@ -612,14 +632,32 @@
     </div>
   </header>
 
-  <!-- Non-blocking: shown for an unverified email, or after clicking the
-       verification link (?verified=1 / ?verified=invalid). Never gates access. -->
+  <!-- Shown for an unverified email, or after clicking the verification
+       link (?verified=1 / ?verified=invalid). Verification is required
+       before an account's first session (see auth.require_active_plan);
+       everything else stays usable without it. -->
   <div class="verify-banner hidden" id="verifyBanner">
     <span id="verifyBannerText"></span>
     <span style="display:flex; align-items:center; gap:10px; flex:none;">
       <button class="adv-toggle hidden" id="resendVerifyBtn" onclick="resendVerification()">resend email</button>
       <button class="adv-toggle" onclick="dismissBanner()">dismiss</button>
     </span>
+  </div>
+
+  <!-- Shown once a trial account is out of minutes (see setTrialInfo).
+       Above the session grid on purpose: it's in view on the start screen,
+       where Start is disabled alongside it, without covering a debrief
+       that's still on screen from the session that used up the trial. -->
+  <div class="panel trial-upgrade hidden" id="trialUpgradeCard">
+    <p class="eyebrow">Trial complete</p>
+    <h2 id="trialUpgradeTitle">You've used your trial minutes</h2>
+    <p class="auth-note" style="margin:0;">Upgrade to Pro to keep practicing. Your debrief history stays with your account.</p>
+    <p class="auth-error checkout-error hidden" style="margin:10px 0 0;"></p>
+    <div class="upgrade-actions">
+      <button class="btn" data-checkout-btn onclick="startCheckout('pro_monthly')">Upgrade to Pro — $129/month</button>
+      <button class="btn ghost" data-checkout-btn onclick="startCheckout('pro_annual')">Pro — $1,316/year</button>
+    </div>
+    <p class="fine-print">Billed automatically at the interval selected, renews until canceled. Cancel anytime from Profile → Manage subscription — access continues through the period you've already paid for.</p>
   </div>
 
   <div class="session-grid">
@@ -839,6 +877,7 @@
       <div class="goal-recap hidden" id="debriefGoals"></div>
       <div class="end-row" style="display:flex; gap:10px; flex-wrap:wrap;">
         <button class="btn" onclick="resetAll()">Practice another scenario</button>
+        <button class="btn ghost hidden" id="debriefUpgradeBtn" onclick="showTrialUpgrade()">Upgrade to Pro</button>
       </div>
     </div>
   </section>
@@ -934,6 +973,10 @@
     </div>
   </section>
 
+  <!-- Pinned copy of the header's trial counter, see .trial-pill-float.
+       aria-hidden: the header one is the one screen readers get. -->
+  <div class="trial-pill trial-pill-float hidden" id="trialPillFloat" aria-hidden="true"></div>
+
   <footer>
     <img src="assets/aic-logo.png" alt="AI Curator LLC" />
     <span class="fine">CLAUDE FOR CONVERSATION · ANAM FOR THE LIVE AVATAR</span>
@@ -995,12 +1038,12 @@
     <h2>Request pending</h2>
     <p class="auth-note" id="pendingScreenNote">Your access request is pending approval. You'll be able to use ConsultCastAI as soon as an admin approves your account — no action needed from you in the meantime.</p>
     <p class="auth-note">Or skip the wait: subscribe and you're in immediately.</p>
-    <p class="auth-error hidden" id="checkoutError"></p>
-    <button class="btn block" id="checkoutBtnMonthly" style="margin-bottom:10px;" onclick="startCheckout('pro_monthly')">ConsultCastAI Pro — $129/month</button>
-    <button class="btn block" id="checkoutBtnAnnual" style="margin-bottom:18px;" onclick="startCheckout('pro_annual')">ConsultCastAI Pro — $1,316/year</button>
+    <p class="auth-error checkout-error hidden" id="checkoutError"></p>
+    <button class="btn block" data-checkout-btn id="checkoutBtnMonthly" style="margin-bottom:10px;" onclick="startCheckout('pro_monthly')">ConsultCastAI Pro — $129/month</button>
+    <button class="btn block" data-checkout-btn id="checkoutBtnAnnual" style="margin-bottom:18px;" onclick="startCheckout('pro_annual')">ConsultCastAI Pro — $1,316/year</button>
     <p class="field-label" style="margin-bottom:8px;">Or for a team (5 seats, pooled usage)</p>
-    <button class="btn ghost block" id="checkoutBtnTeamMonthly" style="margin-bottom:10px;" onclick="startCheckout('team_monthly')">ConsultCastAI Team — $599/month</button>
-    <button class="btn ghost block" id="checkoutBtnTeamAnnual" style="margin-bottom:18px;" onclick="startCheckout('team_annual')">ConsultCastAI Team — $6,110/year</button>
+    <button class="btn ghost block" data-checkout-btn id="checkoutBtnTeamMonthly" style="margin-bottom:10px;" onclick="startCheckout('team_monthly')">ConsultCastAI Team — $599/month</button>
+    <button class="btn ghost block" data-checkout-btn id="checkoutBtnTeamAnnual" style="margin-bottom:18px;" onclick="startCheckout('team_annual')">ConsultCastAI Team — $6,110/year</button>
     <!-- FTC "click to cancel" disclosure: substance, not boilerplate — this
          is real auto-renewing billing, so how it renews and how to stop it
          has to be stated plainly right next to the buttons that start it. -->
@@ -1106,6 +1149,14 @@ let hardLimitEndTriggered = false;
 let lastActivityAt = null;   // wall-clock timestamp of the last real speech or sent message
 let idlePromptShownAt = null; // null = prompt not currently showing
 
+// Trial accounts only (null for everyone else). All of it comes from the
+// server, which is what actually counts the minutes and enforces the cap
+// (see minutes.py) — nothing here is the source of truth, it's what the
+// counter and the upgrade prompt are drawn from.
+let trialInfo = null;            // { total_sec, remaining_sec, session_limit_sec, warning_sec, exhausted }
+let sessionTimeLimitSec = null;  // this session's limit in seconds, set by the server at start; null = none
+let sessionTrialBaseSec = null;  // trial seconds left when this session started; null when no session is running
+
 // Discrete zones, not a smooth gradient: green through 9:59, yellow from
 // 10:00, red from 13:00. The bar visually maxes out at 15:00 and stays
 // full/red past that — it doesn't cap or end the session, just stops
@@ -1168,28 +1219,43 @@ function updateTimerDisplay(){
     : elapsedSec >= TIME_YELLOW_AT_SEC ? 'var(--warn)'
     : 'var(--good)';
 
+  renderTrialPill(elapsedSec);
   checkCostControls(elapsedSec);
 }
 
-// Hard time limit + idle disconnect for live avatar sessions. Only runs
-// from updateTimerDisplay()'s own tick, which stopTimer() already clears
-// during a pause — so both checks naturally stop entirely while paused,
-// with no separate flag needed for that. Gated on avatar mode: a voice-only
-// session has no live per-minute connection to protect against.
+// Session time limit + idle disconnect. Only runs from updateTimerDisplay()'s
+// own tick, which stopTimer() already clears during a pause — so both
+// checks naturally stop entirely while paused, with no separate flag needed
+// for that.
+//
+// Two different limits can apply. A trial session has one set by the
+// server (sessionTimeLimitSec: the per-session trial cap, or whatever is
+// left of the trial if that's less), in any output mode. Otherwise only a
+// live avatar session has one (HARD_LIMIT_SEC) — a voice-only session on a
+// paid plan has no per-minute connection to protect against. Idle
+// disconnect is about the avatar connection alone, so it stays gated on
+// avatar mode either way.
 function checkCostControls(elapsedSec){
+  const isTrialLimit = sessionTimeLimitSec !== null;
+  const limit = isTrialLimit ? sessionTimeLimitSec : (outputMode === 'avatar' ? HARD_LIMIT_SEC : null);
+  if(limit !== null){
+    const warnAt = isTrialLimit ? Math.max(0, limit - trialWarningSec()) : HARD_LIMIT_WARNING_AT_SEC;
+    if(!hardLimitWarningShown && elapsedSec >= warnAt){
+      hardLimitWarningShown = true;
+      showSessionNotice(isTrialLimit
+        ? trialWarningText(limit - elapsedSec)
+        : '5 minutes left in this session — it will end automatically at the 30-minute mark, with your debrief.');
+    }
+    if(!hardLimitEndTriggered && elapsedSec >= limit){
+      hardLimitEndTriggered = true;
+      if(isTrialLimit) showSessionNotice(trialEndText());
+      else hideSessionNotice();
+      window.endSession(); // same path as clicking End yourself — normal debrief, not an error
+      return; // endSession() tears down the avatar itself; nothing left to idle-check
+    }
+  }
+
   if(outputMode !== 'avatar') return;
-
-  if(!hardLimitWarningShown && elapsedSec >= HARD_LIMIT_WARNING_AT_SEC){
-    hardLimitWarningShown = true;
-    showSessionNotice('5 minutes left in this session — it will end automatically at the 30-minute mark, with your debrief.');
-  }
-  if(!hardLimitEndTriggered && elapsedSec >= HARD_LIMIT_SEC){
-    hardLimitEndTriggered = true;
-    hideSessionNotice();
-    window.endSession(); // same path as clicking End yourself — normal debrief, not an error
-    return; // endSession() tears down the avatar itself; nothing left to idle-check
-  }
-
   if(!lastActivityAt) return; // not armed yet (set by startSession/resumeSession)
   const idleSec = Math.floor((Date.now() - lastActivityAt) / 1000);
   if(!idlePromptShownAt){
@@ -1200,6 +1266,120 @@ function checkCostControls(elapsedSec){
   } else if(Math.floor((Date.now() - idlePromptShownAt) / 1000) >= IDLE_GRACE_SEC){
     idleDisconnect();
   }
+}
+
+function trialWarningSec(){
+  return (trialInfo && trialInfo.warning_sec) || 60;
+}
+
+function trialWarningText(secondsLeft){
+  const mins = Math.round(secondsLeft / 60);
+  const left = secondsLeft >= 60 ? `${mins} minute${mins === 1 ? '' : 's'}` : 'Less than a minute';
+  return `${left} left in this trial session. It will end automatically, with your debrief.`;
+}
+
+// Which of the two trial limits ended the session: the per-session cap, or
+// the trial itself running out (the session's limit was shorter than the
+// cap because that's all that was left).
+function trialEndText(){
+  const cap = trialInfo ? trialInfo.session_limit_sec : null;
+  if(cap !== null && sessionTimeLimitSec < cap) return "You've used all of your trial minutes, so this session has ended. Your debrief is below.";
+  const capMin = cap !== null ? Math.round(cap / 60) : Math.round(sessionTimeLimitSec / 60);
+  return `Trial sessions are limited to ${capMin} minutes, so this one has ended. Your debrief is below.`;
+}
+
+// --- Trial counter + upgrade prompt ---------------------------------------
+function trialExhausted(){
+  return !!(trialInfo && trialInfo.exhausted);
+}
+
+// The single place trial state changes: /auth/me on load, the response to
+// starting, pausing or ending a session. Redraws everything that depends on
+// it.
+function setTrialInfo(info){
+  trialInfo = info || null;
+  renderTrialPill();
+  const out = trialExhausted();
+  // Not shown over a session that's still running: the session ends itself
+  // (with its debrief) and this appears then.
+  document.getElementById('trialUpgradeCard').classList.toggle('hidden', !out || sessionTrialBaseSec !== null);
+  document.getElementById('debriefUpgradeBtn').classList.toggle('hidden', !out);
+  if(trialInfo){
+    document.getElementById('trialUpgradeTitle').textContent =
+      `You've used your ${Math.round(trialInfo.total_sec / 60)} trial minutes`;
+  }
+  updateStartBtn();
+}
+
+// "18 of 30 trial minutes left." During a session it counts down from what
+// was left when the session started; otherwise it's the server's figure.
+// Whole minutes, rounded down, so it never promises time that isn't there.
+function renderTrialPill(elapsedSec){
+  const pill = document.getElementById('trialPill');
+  if(!trialInfo){ pill.classList.add('hidden'); updateTrialPillFloat(); return; }
+  let remaining = trialInfo.remaining_sec;
+  if(sessionTrialBaseSec !== null && typeof elapsedSec === 'number'){
+    remaining = Math.max(0, sessionTrialBaseSec - elapsedSec);
+  }
+  const mins = Math.floor(remaining / 60);
+  const text = `${mins} of ${Math.round(trialInfo.total_sec / 60)} trial minutes left`;
+  const float = document.getElementById('trialPillFloat');
+  [pill, float].forEach(el => {
+    if(el.textContent !== text) el.textContent = text; // this runs every second; only touch the DOM (and screen readers) when the minute changes
+    el.classList.toggle('low', mins > 0 && mins <= 5);
+    el.classList.toggle('out', mins <= 0);
+  });
+  pill.classList.remove('hidden');
+  updateTrialPillFloat();
+}
+
+// Pinned copy: only during a running session, and only while the header's
+// own counter is off screen.
+let trialPillInView = true;
+function updateTrialPillFloat(){
+  const show = !!trialInfo && sessionTrialBaseSec !== null && !trialPillInView;
+  document.getElementById('trialPillFloat').classList.toggle('hidden', !show);
+}
+if('IntersectionObserver' in window){
+  new IntersectionObserver(entries => {
+    trialPillInView = entries[entries.length - 1].isIntersecting;
+    updateTrialPillFloat();
+  }).observe(document.getElementById('trialPill'));
+}
+
+window.showTrialUpgrade = function(){
+  const card = document.getElementById('trialUpgradeCard');
+  card.classList.remove('hidden');
+  card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+};
+
+// The server keeps each session's clock (see minutes.py) and has to be told
+// when it stops and starts. Queued, so a quick pause-then-resume reaches it
+// in that order, and so a turn can wait for a resume that's still on its
+// way (see sendTurn). A failed call is logged, not surfaced: the session
+// carries on, the clock just isn't paused server-side.
+let serverClockQueue = Promise.resolve();
+function syncServerClock(action, id){
+  const target = id || sessionId;
+  if(!target) return serverClockQueue;
+  serverClockQueue = serverClockQueue
+    .then(() => api(`/sessions/${target}/${action}`, { method: 'POST' }))
+    .catch(e => { console.warn(`Could not ${action} the session clock:`, e.message); return null; });
+  return serverClockQueue;
+}
+
+// api() throws Error("<status>: <body>"); FastAPI's body is {"detail": ...},
+// where detail is either a plain string or {code, message}. Returns
+// {code, message} either way, so callers can branch on the code and show
+// the message instead of raw JSON.
+function errorDetail(e){
+  const m = /^\d+: ([\s\S]*)$/.exec((e && e.message) || '');
+  try{
+    const detail = JSON.parse(m ? m[1] : '').detail;
+    if(detail && typeof detail === 'object') return { code: detail.code || null, message: detail.message || '' };
+    if(typeof detail === 'string') return { code: null, message: detail };
+  }catch(_){ /* not JSON: fall through to the raw message */ }
+  return { code: null, message: (e && e.message) || '' };
 }
 
 function showSessionNotice(text){
@@ -2140,9 +2320,12 @@ window.submitTeamInvite = async function(){
 };
 
 window.startCheckout = async function(plan){
-  const buttons = ['checkoutBtnMonthly', 'checkoutBtnAnnual', 'checkoutBtnTeamMonthly', 'checkoutBtnTeamAnnual'].map(id => document.getElementById(id));
-  const errEl = document.getElementById('checkoutError');
-  errEl.classList.add('hidden');
+  // Checkout buttons live in two places: the pending-approval screen and
+  // the trial upgrade prompt. Both sets (and both error lines) are handled
+  // together, whichever one was clicked.
+  const buttons = Array.from(document.querySelectorAll('[data-checkout-btn]'));
+  const errEls = Array.from(document.querySelectorAll('.checkout-error'));
+  errEls.forEach(el => el.classList.add('hidden'));
   buttons.forEach(b => b.disabled = true);
   try{
     const res = await api('/billing/create-checkout-session', {
@@ -2151,8 +2334,10 @@ window.startCheckout = async function(plan){
     });
     location.href = res.checkout_url; // hands off to Stripe's own hosted checkout page — no card handling here at all
   }catch(e){
-    errEl.textContent = 'Could not start checkout: ' + e.message;
-    errEl.classList.remove('hidden');
+    errEls.forEach(el => {
+      el.textContent = 'Could not start checkout: ' + errorDetail(e).message;
+      el.classList.remove('hidden');
+    });
     buttons.forEach(b => b.disabled = false);
   }
 };
@@ -2184,6 +2369,7 @@ function onAuthenticated(me){
   document.getElementById('profileEmail').textContent = me.email || '';
   // Nothing to log out of in dev bypass (no real session), so no menu either.
   document.getElementById('profileWrap').classList.toggle('hidden', !!me.dev_bypass || !TOKEN);
+  setTrialInfo(me.trial); // null unless this is a trial account
   document.getElementById('pendingRequestsMenuBtn').classList.toggle('hidden', !me.is_admin);
   document.getElementById('teamMenuBtn').classList.toggle('hidden', !me.is_team_owner);
   // A regular (non-owner) team member never paid anything and has no
@@ -2213,7 +2399,7 @@ function onAuthenticated(me){
   if(flashBanner) return;
   document.getElementById('resendVerifyBtn').classList.toggle('hidden', !!me.email_verified || !!me.dev_bypass);
   if(me.email_verified) window.dismissBanner();
-  else showBanner('Verify your email: check your inbox for the link we sent. Nothing is locked in the meantime.');
+  else showBanner("Verify your email: check your inbox for the link we sent. You'll need to do this before your first practice session.");
 }
 
 async function checkAuth(){
@@ -2389,7 +2575,9 @@ function goalRecapHtml(){
 function updateStartBtn(){
   const p = document.getElementById('personaSelect').value;
   const s = document.getElementById('scenarioSelect').value;
-  document.getElementById('startBtn').disabled = !(p && s);
+  // A trial that's out of minutes can't start a session; the server refuses
+  // it regardless (auth.require_active_plan), this just says so up front.
+  document.getElementById('startBtn').disabled = !(p && s) || trialExhausted();
 }
 
 window.startSession = async function(){
@@ -2484,6 +2672,11 @@ window.startSession = async function(){
     lastActivityAt = Date.now();
     idlePromptShownAt = null;
     hideSessionNotice();
+    // Trial only: the server sets this session's limit and reports what was
+    // left of the trial as it started.
+    sessionTimeLimitSec = (typeof session.time_limit_sec === 'number') ? session.time_limit_sec : null;
+    sessionTrialBaseSec = session.trial ? session.trial.remaining_sec : null;
+    setTrialInfo(session.trial);
     startTimer();
     setComposerEnabled(true);
     document.getElementById('msgInput').placeholder = hasOpener
@@ -2506,7 +2699,20 @@ window.startSession = async function(){
       speakPersonaLine(session.conversation[0].content, 1500);
     }
   }catch(e){
-    alert('Could not start session: ' + e.message);
+    const detail = errorDetail(e);
+    if(detail.code === 'trial_exhausted'){
+      // Out of trial minutes (possibly used up in another tab since this
+      // page loaded): refresh the counter and show the upgrade prompt.
+      await checkAuth();
+      window.showTrialUpgrade();
+    } else if(detail.code === 'email_unverified'){
+      showBanner(detail.message);
+      document.getElementById('resendVerifyBtn').classList.remove('hidden');
+      document.getElementById('verifyBanner').scrollIntoView({ behavior: 'smooth', block: 'center' });
+      alert(detail.message);
+    } else {
+      alert('Could not start session: ' + detail.message);
+    }
   }finally{
     startBtn.disabled = false;
     startBtn.textContent = startBtnLabel;
@@ -2826,6 +3032,7 @@ window.sendTurn = async function(hintText){
   input.value = '';
   dismissIdlePrompt(); // a message was just sent — resets the idle clock
   appendMsg('user', 'You', text);
+  await serverClockQueue; // a resume still on its way has to land first, or the server would refuse this turn as paused
 
   setSendBusy(true);
   showTypingIndicator(currentPersona.name);
@@ -2841,7 +3048,18 @@ window.sendTurn = async function(hintText){
     speakPersonaLine(res.persona_reply);
   }catch(e){
     hideTypingIndicator();
-    alert('Turn failed: ' + e.message);
+    const detail = errorDetail(e);
+    if(detail.code === 'trial_session_limit'){
+      // The server's clock reached the limit a moment before this one did:
+      // end the same way the timer would have.
+      if(!hardLimitEndTriggered){
+        hardLimitEndTriggered = true;
+        showSessionNotice(trialEndText());
+        window.endSession();
+      }
+    } else {
+      alert('Turn failed: ' + detail.message);
+    }
   }finally{
     setSendBusy(false);
   }
@@ -2959,6 +3177,7 @@ function pauseSession(){
   // after calling this, for the auto-pause case.
   idlePromptShownAt = null;
   hideSessionNotice();
+  syncServerClock('pause'); // paused time isn't counted (or charged to a trial)
 }
 
 function resumeSession(){
@@ -2972,6 +3191,7 @@ function resumeSession(){
     pausedAt = null;
   }
   setSessionPaused(false);
+  syncServerClock('resume');
   lastActivityAt = Date.now(); // resuming counts as "just here" — don't start the idle clock already primed to fire
   hideSessionNotice();
   startTimer(); // resumes ticking from the correct (adjusted) elapsed point
@@ -2988,6 +3208,8 @@ window.endSession = async function(){
   btn.textContent = 'Generating debrief…';
   try{
     const res = await api(`/sessions/${sessionId}/end`, { method: 'POST' });
+    sessionTrialBaseSec = null; // the session's over: the counter goes back to the server's figure (and the pinned copy goes away)
+    setTrialInfo(res.trial);
     stopAvatarAndCamera();
     stopListening();
     pausedAt = null; setSessionPaused(false); // don't carry paused state into whatever session comes next
@@ -3018,6 +3240,9 @@ window.endSession = async function(){
 window.restartSession = function(){
   if(!sessionId) return;
   if(!confirm('Restart without generating a debrief? This abandons the current practice session.')) return;
+  // No debrief, but the time was still used: stop the server's clock for
+  // this session and pick up the updated trial figure.
+  syncServerClock('pause', sessionId).then(res => { if(res && 'trial' in res) setTrialInfo(res.trial); });
   stopTimer();
   stopAvatarAndCamera();
   document.getElementById('centerActive').classList.add('hidden');
@@ -3034,6 +3259,8 @@ window.resetAll = function(){
   hardLimitEndTriggered = false;
   lastActivityAt = null;
   idlePromptShownAt = null;
+  sessionTimeLimitSec = null;
+  sessionTrialBaseSec = null;
   hideSessionNotice();
   stopTimer();
   resetTimerDisplay();
@@ -3063,7 +3290,7 @@ window.resetAll = function(){
   stopListening(); // safety: don't leave the mic listening in the background after a session ends
   setMicBusy(false); // safety: never leave the mic stuck disabled between sessions
   setComposerEnabled(false); // called after setMicBusy so this wins: no session, composer off
-  updateStartBtn();
+  setTrialInfo(trialInfo); // back on the start screen: counter, upgrade prompt and Start all redrawn from the current figure
 };
 
 // ---------------------------------------------------------------------
