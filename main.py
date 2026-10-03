@@ -870,7 +870,7 @@ def create_portal_session(user: auth.AuthUser = Depends(auth.verify_user)):
         raise HTTPException(500, "Billing is not configured")
     account = users.get_user_by_id(user.rep_id)
     if not account:
-        raise HTTPException(400, "No billing account on file yet — subscribe first")
+        raise HTTPException(400, "No billing account on file yet. Subscribe first.")
 
     if account.team_id:
         team = teams.get_team(account.team_id)
@@ -880,7 +880,7 @@ def create_portal_session(user: auth.AuthUser = Depends(auth.verify_user)):
     else:
         customer_id = account.stripe_customer_id
     if not customer_id:
-        raise HTTPException(400, "No billing account on file yet — subscribe first")
+        raise HTTPException(400, "No billing account on file yet. Subscribe first.")
 
     try:
         portal = stripe.billing_portal.Session.create(

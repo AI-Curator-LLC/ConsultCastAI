@@ -4,7 +4,7 @@
 <!-- build marker 2026-09-26: forces a genuinely new frontend build on Render (login + password reset release) -->
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>ConsultCastAI — AI Curator LLC</title>
+<title>ConsultCastAI | AI Curator LLC</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700;800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -662,13 +662,13 @@
     <p class="auth-note hidden" id="planMinutesNote" style="margin:8px 0 0;"></p>
     <p class="auth-error checkout-error hidden" style="margin:10px 0 0;"></p>
     <div class="upgrade-actions">
-      <button class="btn" data-checkout-btn onclick="startCheckout('pro_monthly')">Upgrade to Pro — $129/month</button>
-      <button class="btn ghost" data-checkout-btn onclick="startCheckout('pro_annual')">Pro — $1,316/year</button>
+      <button class="btn" data-checkout-btn onclick="startCheckout('pro_monthly')">Upgrade to Pro: $129/month</button>
+      <button class="btn ghost" data-checkout-btn onclick="startCheckout('pro_annual')">Pro: $1,316/year</button>
     </div>
     <p class="field-label" style="margin:4px 0 0;">Or for a team (5 seats, pooled usage)</p>
     <div class="upgrade-actions" style="margin-top:8px;">
-      <button class="btn ghost" data-checkout-btn onclick="startCheckout('team_monthly')">Team — $599/month</button>
-      <button class="btn ghost" data-checkout-btn onclick="startCheckout('team_annual')">Team — $6,110/year</button>
+      <button class="btn ghost" data-checkout-btn onclick="startCheckout('team_monthly')">Team: $599/month</button>
+      <button class="btn ghost" data-checkout-btn onclick="startCheckout('team_annual')">Team: $6,110/year</button>
     </div>
     <!-- FTC "click to cancel" disclosure: substance, not boilerplate — this
          is real auto-renewing billing, so how it renews and how to stop it
@@ -706,8 +706,8 @@
         <div class="field">
           <span class="field-label">Call direction</span>
           <select id="callDirectionSelect">
-            <option value="outbound" selected>Outbound — you called them</option>
-            <option value="inbound">Inbound — they called you</option>
+            <option value="outbound" selected>Outbound: you called them</option>
+            <option value="inbound">Inbound: they called you</option>
           </select>
         </div>
         <div class="field">
@@ -731,10 +731,10 @@
       <!-- In-session only: the setup selects above are hidden once a session starts. -->
       <div id="sessionBlock" class="hidden">
         <div class="tile-grid">
-          <div class="info-tile"><div class="k">Industry</div><div class="v" id="tileIndustry">—</div></div>
-          <div class="info-tile"><div class="k">Scenario</div><div class="v" id="tileCall">—</div></div>
-          <div class="info-tile"><div class="k">Focus Area</div><div class="v" id="tileFocus">—</div></div>
-          <div class="info-tile"><div class="k">Difficulty</div><div class="v"><span class="diff-dot" id="tileDiffDot"></span><span id="tileDifficulty">—</span></div></div>
+          <div class="info-tile"><div class="k">Industry</div><div class="v" id="tileIndustry">-</div></div>
+          <div class="info-tile"><div class="k">Scenario</div><div class="v" id="tileCall">-</div></div>
+          <div class="info-tile"><div class="k">Focus Area</div><div class="v" id="tileFocus">-</div></div>
+          <div class="info-tile"><div class="k">Difficulty</div><div class="v"><span class="diff-dot" id="tileDiffDot"></span><span id="tileDifficulty">-</span></div></div>
         </div>
       </div>
 
@@ -840,7 +840,7 @@
             <circle class="arc-bg" cx="50" cy="50" r="40" pathLength="100" stroke-dasharray="75 100" transform="rotate(135 50 50)"/>
             <circle class="arc-fg" id="pFill" cx="50" cy="50" r="40" pathLength="100" stroke="url(#gradP)" stroke-dasharray="0 100" stroke-opacity="0" transform="rotate(135 50 50)"/>
           </svg>
-          <span class="gauge-val" id="pVal">—</span>
+          <span class="gauge-val" id="pVal">-</span>
         </div>
         <div class="gauge-info"><div class="gauge-label">Objection Pressure</div><div class="gauge-caption">How hard they're pushing back. Lower is better.</div></div>
       </div>
@@ -851,7 +851,7 @@
             <circle class="arc-bg" cx="50" cy="50" r="40" pathLength="100" stroke-dasharray="75 100" transform="rotate(135 50 50)"/>
             <circle class="arc-fg" id="tFill" cx="50" cy="50" r="40" pathLength="100" stroke="url(#gradT)" stroke-dasharray="0 100" stroke-opacity="0" transform="rotate(135 50 50)"/>
           </svg>
-          <span class="gauge-val" id="tVal">—</span>
+          <span class="gauge-val" id="tVal">-</span>
         </div>
         <div class="gauge-info"><div class="gauge-label">Trust</div><div class="gauge-caption">How much they're opening up. Higher is better.</div></div>
       </div>
@@ -862,7 +862,7 @@
             <circle class="arc-bg" cx="50" cy="50" r="40" pathLength="100" stroke-dasharray="75 100" transform="rotate(135 50 50)"/>
             <circle class="arc-fg" id="sFill" cx="50" cy="50" r="40" pathLength="100" stroke="url(#gradS)" stroke-dasharray="0 100" stroke-opacity="0" transform="rotate(135 50 50)"/>
           </svg>
-          <span class="gauge-val" id="sVal">—</span>
+          <span class="gauge-val" id="sVal">-</span>
         </div>
         <div class="gauge-info"><div class="gauge-label">Specificity</div><div class="gauge-caption">How concrete you're being. Higher is better.</div></div>
       </div>
@@ -938,16 +938,16 @@
 
       <div class="field">
         <span class="field-label">Email</span>
-        <div class="profile-static" id="profileEmailStatic">—</div>
+        <div class="profile-static" id="profileEmailStatic">-</div>
       </div>
       <div class="field">
         <span class="field-label">Member since</span>
-        <div class="profile-static" id="profileMemberSince">—</div>
+        <div class="profile-static" id="profileMemberSince">-</div>
       </div>
       <div class="field">
         <span class="field-label">Verification</span>
         <div class="profile-static">
-          <span id="profileVerifiedStatic">—</span>
+          <span id="profileVerifiedStatic">-</span>
           <span style="margin-left:10px;">
             <button class="adv-toggle hidden" id="profileResendBtn" onclick="resendVerificationFromProfile()">resend email</button>
           </span>
@@ -987,12 +987,12 @@
       </div>
 
       <p class="profile-section-title">Your data</p>
-      <p class="auth-note">Download a copy of everything tied to your account: profile, plan, and every session (debrief and transcript, where the transcript hasn't already been purged — see Data Retention below).</p>
+      <p class="auth-note">Download a copy of everything tied to your account: profile, plan, and every session (debrief and transcript, where the transcript hasn't already been purged; see Data Retention below).</p>
       <button class="btn ghost block" id="exportDataBtn" onclick="exportMyData()">Export my data</button>
 
       <div id="dangerZoneSection">
         <p class="profile-section-title" style="color:var(--danger);">Danger zone</p>
-        <p class="auth-note">Deletes your account, sessions, and usage records immediately — this cannot be undone. If you have an active subscription, cancel it first via Manage subscription.</p>
+        <p class="auth-note">Deletes your account, sessions, and usage records immediately. This cannot be undone. If you have an active subscription, cancel it first via Manage subscription.</p>
         <div class="field" id="deleteAccountPasswordField">
           <span class="field-label">Current password</span>
           <input class="text-input" id="deleteAccountPasswordInput" type="password" autocomplete="current-password" />
@@ -1329,7 +1329,7 @@ function checkCostControls(elapsedSec){
       hardLimitWarningShown = true;
       showSessionNotice(isTrialLimit
         ? limitWarningText(limit - elapsedSec)
-        : '5 minutes left in this session — it will end automatically at the 30-minute mark, with your debrief.');
+        : '5 minutes left in this session. It will end automatically at the 30-minute mark, with your debrief.');
     }
     if(!hardLimitEndTriggered && elapsedSec >= limit){
       hardLimitEndTriggered = true;
@@ -2134,10 +2134,10 @@ window.openProfile = async function(){
   document.getElementById('profileScreen').scrollIntoView({ behavior: 'smooth' });
   try{
     const me = await api('/auth/me');
-    document.getElementById('profileEmailStatic').textContent = me.email || '—';
+    document.getElementById('profileEmailStatic').textContent = me.email || '-';
     document.getElementById('profileMemberSince').textContent = me.created_at
       ? new Date(me.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })
-      : '—';
+      : '-';
     const verifiedEl = document.getElementById('profileVerifiedStatic');
     verifiedEl.textContent = me.email_verified ? 'Verified' : 'Not verified';
     verifiedEl.style.color = me.email_verified ? 'var(--good)' : 'var(--warn)';
@@ -2452,7 +2452,7 @@ async function loadDebriefHistory(){
     const personaSpan = document.createElement('span');
     personaSpan.className = 'persona';
     personaSpan.textContent = s.persona_name;
-    main.append(personaSpan, document.createTextNode(' — '));
+    main.append(personaSpan, document.createTextNode(' · '));
     const scenarioSpan = document.createElement('span');
     scenarioSpan.className = 'scenario';
     scenarioSpan.textContent = s.scenario_title;
@@ -2496,7 +2496,7 @@ async function loadDebriefHistory(){
 // the debrief text is already sitting in the session object rendered above.
 function downloadDebrief(s){
   const when = s.created_at ? new Date(s.created_at).toLocaleString() : '';
-  const text = `ConsultCastAI Debrief\n${s.persona_name} — ${s.scenario_title}\n${when} · ${formatDuration(s.duration_sec)}\n\n${s.debrief || '(no debrief available)'}\n`;
+  const text = `ConsultCastAI Debrief\n${s.persona_name} · ${s.scenario_title}\n${when} · ${formatDuration(s.duration_sec)}\n\n${s.debrief || '(no debrief available)'}\n`;
   const blob = new Blob([text], { type: 'text/plain' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -2890,7 +2890,7 @@ function onAuthenticated(me){
       // runs server-to-server and may not have landed by the time Stripe
       // redirects back here: "give it a moment", not "your payment failed".
       document.getElementById('pendingScreenNote').textContent =
-        "Payment received! Finalizing your access — this usually takes a few seconds.";
+        "Payment received. Finalizing your access, this usually takes a few seconds.";
     }
     return;
   }
@@ -2975,7 +2975,7 @@ function handleInviteParam(){
   inviteToken = t;
   stripQueryParam('invite_token');
   stripQueryParam('invite_email');
-  showAuthScreen('signup', "You've been invited to join a team — no payment needed, just set a password.");
+  showAuthScreen('signup', "You've been invited to join a team. No payment needed, just set a password.");
   if(email){
     document.getElementById('authEmail').value = email;
     document.getElementById('authEmail').readOnly = true; // must match exactly what the invite was sent to
@@ -3000,7 +3000,7 @@ async function loadPersonas(){
 function populatePersonaSelect(){
   const select = document.getElementById('personaSelect');
   select.innerHTML = '<option value="">Choose a persona…</option>' +
-    personas.map(p => `<option value="${p.id}">${p.name} — ${p.role}</option>`).join('');
+    personas.map(p => `<option value="${p.id}">${p.name}, ${p.role}</option>`).join('');
 }
 
 window.onPersonaChange = function(){
@@ -3202,7 +3202,7 @@ window.startSession = async function(){
     setComposerEnabled(true);
     document.getElementById('msgInput').placeholder = hasOpener
       ? 'Type your response, or use the mic...'
-      : 'You called them — type your opening line, or use the mic...';
+      : 'You called them. Type your opening line, or use the mic...';
     if(!hasOpener){
       startListening(); // outbound: you speak first, nothing to wait on before it's your turn
     }
@@ -3806,7 +3806,7 @@ window.resetAll = function(){
   setGoals(false, true);
   renderObjections(null);
   document.getElementById('coachFeed').innerHTML = '<div class="coach-empty">Start a session to see live coaching here.</div>';
-  updateMeters('—', '—', '—'); // not a number, so setArc() empties the arcs too
+  updateMeters('-', '-', '-'); // not a number, so setArc() empties the arcs too
   document.getElementById('personaSelect').disabled = false;
   document.getElementById('personaSelect').value = '';
   document.getElementById('callDirectionSelect').disabled = false;
@@ -3838,7 +3838,7 @@ window.resetAll = function(){
 // ---------------------------------------------------------------------
 const INDUSTRY_LABELS = { ecommerce: 'E-commerce', wealth_management: 'Wealth management' };
 function industryLabel(key){
-  if(!key) return '—';
+  if(!key) return '-';
   return INDUSTRY_LABELS[key] || (key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, ' '));
 }
 

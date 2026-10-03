@@ -154,7 +154,7 @@ def send_team_invite_email(to_email: str, token: str) -> None:
         "You've been invited to a ConsultCastAI team",
         "<p>You've been invited to join a team on ConsultCastAI.</p>"
         f'<p>Click to accept and create your account: <a href="{invite_url}">{invite_url}</a></p>'
-        "<p>No payment needed — you're joining an already-subscribed team.</p>",
+        "<p>No payment needed. You're joining an already-subscribed team.</p>",
         dev_log_link=invite_url,
         what="team invite",
     )
