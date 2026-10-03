@@ -11,7 +11,6 @@ storage required by default, see README.md for the local -> production path.
 
 import os
 import secrets
-import time
 import uuid
 from datetime import datetime, timezone
 
@@ -29,6 +28,7 @@ import anam_client
 import content
 import coaching
 import emailer
+import minutes
 import retention
 import store
 import teams
@@ -41,6 +41,7 @@ from models import (
     SessionRecord,
     ConversationTurn,
     StartSessionRequest,
+    StartSessionResponse,
     TurnRequest,
     TurnResponse,
     EndSessionResponse,
@@ -146,7 +147,17 @@ def _start_retention_job() -> None:
     retention.start_background_job()
 
 _coaching_state: dict[str, coaching.CoachingState] = {}
-_start_time: dict[str, float] = {}
+
+
+def _account_for(rep_id: str) -> users.User | None:
+    """The real account a session's time is charged to, or None in local dev
+    bypass (whose synthetic "dev" user has no row; the session's clock is
+    still kept, there's just no ledger to charge). Takes the session
+    owner's id rather than the caller: an admin acting on someone else's
+    session must not have that time land on the admin's own ledger."""
+    if auth.is_dev_bypass():
+        return None
+    return users.get_user_by_id(rep_id)
 
 
 def _frontend_url() -> str:
@@ -318,6 +329,7 @@ def me(user: auth.AuthUser = Depends(auth.verify_user)):
             "created_at": None, "name": None, "company": None,
             "is_admin": True, "approved": True,
             "team_id": None, "is_team_owner": False,
+            "trial": None,
         }
     account = users.get_user_by_id(user.rep_id)
     if not account:
@@ -331,6 +343,9 @@ def me(user: auth.AuthUser = Depends(auth.verify_user)):
         "created_at": account.created_at, "name": account.name, "company": account.company,
         "is_admin": account.is_admin, "approved": account.approved,
         "team_id": account.team_id, "is_team_owner": is_team_owner,
+        # None unless this is a trial account; drives the "N of 30 trial
+        # minutes left" counter and the upgrade prompt.
+        "trial": minutes.trial_status(account),
     }
 
 
@@ -627,7 +642,7 @@ async def stripe_webhook(request: Request):
     return {"received": True}
 
 
-@app.post("/sessions", response_model=SessionRecord)
+@app.post("/sessions", response_model=StartSessionResponse)
 def start_session(req: StartSessionRequest, user: auth.AuthUser = Depends(auth.require_active_plan)):
     persona = content.get_persona(req.persona_id)
     scenario = content.get_scenario(req.scenario_id)
@@ -655,6 +670,12 @@ def start_session(req: StartSessionRequest, user: auth.AuthUser = Depends(auth.r
             opener = scenario.opener
         conversation = [ConversationTurn(role="assistant", content=opener)]
 
+    # A trial session gets a time limit: the per-session cap, or whatever is
+    # left of the trial if that's less. The clock starts here, after the
+    # opener call above, so it runs from when the session actually exists
+    # rather than while the opening line is still being generated.
+    account = _account_for(user.rep_id)
+    now = minutes.now_utc()
     session = SessionRecord(
         rep_id=user.rep_id,
         persona_name=persona.name,
@@ -665,10 +686,11 @@ def start_session(req: StartSessionRequest, user: auth.AuthUser = Depends(auth.r
         call_direction=call_direction,
         active_scenario_id=scenario.id,
         conversation=conversation,
+        time_limit_sec=minutes.session_time_limit(account),
     )
+    minutes.begin(session, now)
     store.save(session)
     _coaching_state[session.id] = coaching.CoachingState()
-    _start_time[session.id] = time.time()
     # Charged the instant a session actually exists, not speculatively before
     # (a request that 404s/500s above never touched this) — see
     # auth.require_active_plan for the cap this counts against. Incremented
@@ -677,13 +699,12 @@ def start_session(req: StartSessionRequest, user: auth.AuthUser = Depends(auth.r
     # pooled cap silently stops being pooled.
     if not auth.is_dev_bypass() and not user.is_admin:
         month_key = datetime.now(timezone.utc).strftime('%Y-%m')
-        account = users.get_user_by_id(user.rep_id)
         if account and account.team_id:
             store.increment_team_session_count(account.team_id, month_key)
         else:
             store.increment_session_count(user.rep_id, month_key)
 
-    return session
+    return StartSessionResponse(**session.model_dump(), trial=minutes.trial_status(account))
 
 
 @app.post("/sessions/{session_id}/turn", response_model=TurnResponse)
@@ -692,6 +713,19 @@ def send_turn(session_id: str, req: TurnRequest, user: auth.AuthUser = Depends(a
     if not session:
         raise HTTPException(404, "Session not found")
     auth.require_owner(session.rep_id, user)
+
+    # Checked before the Claude call, so a turn that isn't going to count
+    # never costs anything either.
+    if session.status == "completed":
+        raise HTTPException(409, "This session has already ended")
+    if minutes.is_paused(session):
+        raise HTTPException(409, "This session is paused. Resume it to continue.")
+    minutes.ensure_tracking(session, minutes.now_utc())
+    if minutes.over_limit(session, minutes.now_utc()):
+        raise HTTPException(status_code=402, detail={
+            "code": "trial_session_limit",
+            "message": "This trial session has reached its time limit.",
+        })
 
     persona = content.get_persona(_persona_id_for(session))
     scenario = content.get_scenario(session.active_scenario_id)
@@ -717,6 +751,10 @@ def send_turn(session_id: str, req: TurnRequest, user: auth.AuthUser = Depends(a
     session.pressure = result.state.pressure
     session.trust = result.state.trust
     session.specificity = result.state.specificity
+    # Every turn settles the time used so far, so a session that's never
+    # formally ended (tab closed, browser crashed) has still been charged
+    # for everything up to its last exchange.
+    minutes.settle(session, _account_for(session.rep_id), minutes.now_utc())
     store.save(session)
 
     return TurnResponse(
@@ -739,9 +777,20 @@ def end_session(session_id: str, user: auth.AuthUser = Depends(auth.require_appr
     persona = content.get_persona(_persona_id_for(session))
     scenario = content.get_scenario(session.active_scenario_id)
 
-    started = _start_time.get(session_id, time.time())
-    duration_sec = int(time.time() - started)
-    session.duration_sec = duration_sec
+    # Ending twice (a double click, a retry after the response was lost)
+    # hands back the debrief already generated instead of paying for a new
+    # one, and can't re-open the clock.
+    if session.status == "completed" and session.debrief:
+        return EndSessionResponse(
+            session_id=session.id, debrief=session.debrief, duration_sec=session.duration_sec,
+            trial=minutes.trial_status(_account_for(session.rep_id)),
+        )
+
+    # The server's own clock (see minutes.py), not an in-memory start time
+    # that a restart or redeploy mid-session would have lost.
+    now = minutes.now_utc()
+    minutes.ensure_tracking(session, now)
+    duration_sec = int(minutes.billable_seconds(session, now))
 
     transcript_lines = [
         f"{'CONSULTANT' if t.role == 'user' else session.persona_name.upper()}: {t.content}"
@@ -756,11 +805,55 @@ def end_session(session_id: str, user: auth.AuthUser = Depends(auth.require_appr
     except Exception as exc:
         print(f"[consultcastai] debrief call failed for session {session.id}: {type(exc).__name__}: {exc}")
         raise HTTPException(status_code=502, detail="Debrief temporarily unavailable")
+    # Closed at the moment End was asked for, not after the debrief came
+    # back: the seconds spent generating it aren't practice time. Only
+    # reached if the debrief succeeded, so a failed attempt leaves the
+    # session open to be ended again.
+    account = _account_for(session.rep_id)
+    minutes.finish(session, now)
+    minutes.settle(session, account, now)
+    session.duration_sec = duration_sec
     session.debrief = debrief
     session.status = "completed"
     store.save(session)
 
-    return EndSessionResponse(session_id=session.id, debrief=debrief, duration_sec=duration_sec)
+    return EndSessionResponse(
+        session_id=session.id, debrief=debrief, duration_sec=duration_sec,
+        trial=minutes.trial_status(account),
+    )
+
+
+@app.post("/sessions/{session_id}/pause")
+def pause_session(session_id: str, user: auth.AuthUser = Depends(auth.require_approved)):
+    """Stops the session's clock. The frontend calls this when the
+    consultant pauses (or is auto-paused for being idle), and when they
+    abandon a session without a debrief, so paused time isn't charged. A
+    paused session refuses turns until it's resumed, so pausing can't be
+    used to keep practicing off the clock."""
+    session = store.get(session_id)
+    if not session:
+        raise HTTPException(404, "Session not found")
+    auth.require_owner(session.rep_id, user)
+    account = _account_for(session.rep_id)
+    now = minutes.now_utc()
+    minutes.ensure_tracking(session, now)
+    minutes.pause(session, now)
+    minutes.settle(session, account, now)
+    store.save(session)
+    return {"paused": minutes.is_paused(session), "trial": minutes.trial_status(account)}
+
+
+@app.post("/sessions/{session_id}/resume")
+def resume_session(session_id: str, user: auth.AuthUser = Depends(auth.require_approved)):
+    session = store.get(session_id)
+    if not session:
+        raise HTTPException(404, "Session not found")
+    auth.require_owner(session.rep_id, user)
+    if session.status == "completed":
+        raise HTTPException(409, "This session has already ended")
+    minutes.resume(session, minutes.now_utc())
+    store.save(session)
+    return {"paused": minutes.is_paused(session), "trial": minutes.trial_status(_account_for(session.rep_id))}
 
 
 @app.get("/sessions/mine")
@@ -864,6 +957,8 @@ def export_my_data(user: auth.AuthUser = Depends(auth.verify_user)):
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "profile": profile,
         "plan": plan,
+        "practice_seconds_total": store.get_total_seconds(user.rep_id),
+        "trial": minutes.trial_status(account),
         "sessions": [_session_dict(s) for s in sessions],
     }
 

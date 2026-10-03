@@ -28,6 +28,7 @@ from datetime import datetime, timezone
 
 from fastapi import Depends, Header, HTTPException
 
+import minutes
 import store
 import teams
 import users
@@ -122,6 +123,21 @@ PRO_MONTHLY_SESSION_CAP = 20
 TEAM_MONTHLY_SESSION_CAP = 100
 
 
+def _require_verified_for_first_session(account: users.User) -> None:
+    """Email has to be verified before an account's first session. Checked
+    against whether it has any session yet rather than applied flatly, so an
+    account that was already practicing before this shipped isn't locked out
+    by it. 403, not 402: nothing to pay for, just a link to click."""
+    if account.email_verified:
+        return
+    if store.list_for_rep(account.id):
+        return
+    raise HTTPException(status_code=403, detail={
+        "code": "email_unverified",
+        "message": "Verify your email before your first session. Check your inbox for the link, or use \"resend email\" to get a new one.",
+    })
+
+
 def require_active_plan(user: AuthUser = Depends(require_approved)) -> AuthUser:
     """Stacked on top of require_approved (chained via Depends above, so a
     still-pending account gets that 403 first) for the one action that
@@ -134,17 +150,22 @@ def require_active_plan(user: AuthUser = Depends(require_approved)) -> AuthUser:
     moment this shipped, every admin account (including whichever one
     bootstrapped the approval system) would itself fail this check, having
     no subscription at all, the same class of self-lockout mistake flagged
-    on earlier features. A manually-approved-but-unsubscribed regular
-    account is NOT exempted, though: approval and having an active
-    subscription (individual or via a team) are two separate gates now.
+    on earlier features.
 
-    A team member's own account has no subscription of its own at all —
-    they ride entirely on their team's, checked via account.team_id."""
+    Three kinds of account get through:
+    - a team member, riding entirely on the team's subscription (their own
+      account has none), checked via account.team_id;
+    - an individual with an active subscription;
+    - a trial: approved, never subscribed (see minutes.is_trial), with trial
+      minutes left. A former subscriber is not a trial and gets the
+      "subscribe" message instead."""
     if _dev_bypass_enabled() or user.is_admin:
         return user
     account = users.get_user_by_id(user.rep_id)
     if not account:
         raise HTTPException(status_code=402, detail="Your subscription isn't active. Please subscribe or update your billing.")
+
+    _require_verified_for_first_session(account)
 
     month_key = datetime.now(timezone.utc).strftime("%Y-%m")
     if account.team_id:
@@ -153,11 +174,19 @@ def require_active_plan(user: AuthUser = Depends(require_approved)) -> AuthUser:
             raise HTTPException(status_code=402, detail="Your team's subscription isn't active. Contact your team owner.")
         usage = store.get_team_usage(team.id, month_key)
         cap = TEAM_MONTHLY_SESSION_CAP
-    else:
-        if not users.subscription_active(account):
-            raise HTTPException(status_code=402, detail="Your subscription isn't active. Please subscribe or update your billing.")
+    elif users.subscription_active(account):
         usage = store.get_usage(user.rep_id, month_key)
         cap = PRO_MONTHLY_SESSION_CAP
+    elif minutes.is_trial(account):
+        status = minutes.trial_status(account)
+        if status["exhausted"]:
+            raise HTTPException(status_code=402, detail={
+                "code": "trial_exhausted",
+                "message": f"You've used your {minutes.TRIAL_TOTAL_SEC // 60} trial minutes. Upgrade to Pro to keep practicing.",
+            })
+        return user  # the trial is capped on minutes, not on a monthly session count
+    else:
+        raise HTTPException(status_code=402, detail="Your subscription isn't active. Please subscribe or update your billing.")
 
     if usage.session_count >= cap:
         raise HTTPException(status_code=402, detail=f"You've used your {cap} sessions this month. Resets next month.")

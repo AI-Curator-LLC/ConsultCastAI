@@ -79,12 +79,31 @@ class SessionRecord(BaseModel):
     # SessionRecord(**raw) round trip instead of silently being dropped —
     # Pydantic v2 ignores undeclared extra fields by default.
     transcript_purged: bool = False
+    # Server-side session time accounting (see minutes.py) — the server's own
+    # clock, so none of it depends on anything the browser reports or keeps.
+    # run_since is the start of the currently-running stretch (None while
+    # paused or ended, and on a record that predates this), run_sec is every
+    # already-closed stretch added up, charged_sec is how much has been
+    # written to the minutes ledger so far (so settling twice never double-
+    # charges). time_limit_sec is set only for a trial session.
+    run_since: str | None = None
+    run_sec: float = 0
+    paused_at: str | None = None
+    ended_at: str | None = None
+    charged_sec: int = 0
+    time_limit_sec: int | None = None
     # Set once, at construction, never touched again. Existing sessions saved
     # before this field existed get "now" the first time they're re-loaded
     # (the default_factory firing on that load, not their real start time) —
     # a one-time quirk of JSON storage having no real migration, not
     # something new sessions from here on run into.
     created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+
+
+class StartSessionResponse(SessionRecord):
+    # Set only for a trial account: remaining minutes and this session's
+    # limit, so the frontend can show the counter without a second request.
+    trial: dict | None = None
 
 
 class StartSessionRequest(BaseModel):
@@ -111,6 +130,7 @@ class EndSessionResponse(BaseModel):
     session_id: str
     debrief: str
     duration_sec: int
+    trial: dict | None = None  # updated trial status after this session's time was charged
 
 
 class AvatarTokenRequest(BaseModel):

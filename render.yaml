@@ -106,6 +106,16 @@ services:
         value: "365"
       - key: POST_CANCEL_GRACE_DAYS
         value: "90"
+      # Trial cap (see minutes.py and README's "Trial and minutes tracking"
+      # section): an approved account that has never subscribed gets this
+      # much practice in total, at most this much per session. Defaults
+      # match these values already; listed here so they're one edit away.
+      - key: TRIAL_TOTAL_MINUTES
+        value: "30"
+      - key: TRIAL_SESSION_MINUTES
+        value: "10"
+      - key: TRIAL_WARNING_SECONDS
+        value: "60"
       # Where the emailed verification link points, and where it lands afterward.
       - key: CONSULTCASTAI_BACKEND_URL
         value: https://consultcastai-api.onrender.com

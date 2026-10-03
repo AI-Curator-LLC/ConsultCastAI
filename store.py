@@ -40,6 +40,11 @@ class UsageRecord:
     user_id: str
     month: str  # "2026-09" format
     session_count: int = 0
+    # Seconds of actual session time charged to this owner this month (see
+    # minutes.py). Same record as session_count on purpose: one ledger row
+    # per owner per month, keyed on a user's id for per-user totals and on a
+    # team's id for the pooled per-account total.
+    seconds_used: int = 0
 
 
 def using_local_store() -> bool:
@@ -267,12 +272,15 @@ def delete_usage_records_for_rep(user_id: str) -> int:
 def get_usage(user_id: str, month: str) -> UsageRecord:
     if _LOCAL:
         with _USAGE_LOCAL_LOCK:
-            raw = _usage_read_all().get(_usage_key(user_id, month))
-        return UsageRecord(user_id=user_id, month=month, session_count=(raw or {}).get("session_count", 0))
+            raw = _usage_read_all().get(_usage_key(user_id, month)) or {}
+        return UsageRecord(user_id=user_id, month=month, session_count=raw.get("session_count", 0),
+                           seconds_used=raw.get("seconds_used", 0))
     doc = _get_client().collection(_USAGE_COLLECTION).document(_usage_key(user_id, month)).get()
     if not doc.exists:
         return UsageRecord(user_id=user_id, month=month)
-    return UsageRecord(user_id=user_id, month=month, session_count=doc.to_dict().get("session_count", 0))
+    raw = doc.to_dict()
+    return UsageRecord(user_id=user_id, month=month, session_count=raw.get("session_count", 0),
+                       seconds_used=raw.get("seconds_used", 0))
 
 
 def increment_session_count(user_id: str, month: str) -> None:
@@ -304,3 +312,43 @@ def get_team_usage(team_id: str, month: str) -> UsageRecord:
 
 def increment_team_session_count(team_id: str, month: str) -> None:
     increment_session_count(team_id, month)
+
+
+# --- minutes ledger (see minutes.py) ---------------------------------------
+# Lives in the usage store, not on session records, for the same reason
+# session_count does: a session can be deleted (by its owner, or by the
+# retention job) without that ever handing back the time it used. The only
+# thing that removes a ledger row is deleting the whole account
+# (delete_usage_records_for_rep above).
+
+def add_seconds(owner_id: str, month: str, seconds: int) -> None:
+    """Adds session time to an owner's ledger row for the month. owner_id is
+    a user's id (per-user total) or a team's id (pooled per-account total) —
+    minutes.settle() writes both for a team member."""
+    if seconds <= 0:
+        return
+    key = _usage_key(owner_id, month)
+    if _LOCAL:
+        with _USAGE_LOCAL_LOCK:
+            data = _usage_read_all()
+            rec = data.get(key, {"user_id": owner_id, "month": month, "session_count": 0})
+            rec["seconds_used"] = rec.get("seconds_used", 0) + seconds
+            data[key] = rec
+            _usage_write_all(data)
+        return
+    from google.cloud import firestore
+    _get_client().collection(_USAGE_COLLECTION).document(key).set(
+        {"user_id": owner_id, "month": month, "seconds_used": firestore.Increment(seconds)}, merge=True,
+    )
+
+
+def get_total_seconds(owner_id: str) -> int:
+    """Every month's seconds_used for one owner, summed — the lifetime total
+    a trial's cap is measured against (a trial isn't monthly)."""
+    if _LOCAL:
+        prefix = f"{owner_id}:"
+        with _USAGE_LOCAL_LOCK:
+            data = _usage_read_all()
+        return sum(int(rec.get("seconds_used", 0)) for key, rec in data.items() if key.startswith(prefix))
+    docs = _get_client().collection(_USAGE_COLLECTION).where("user_id", "==", owner_id).stream()
+    return sum(int(d.to_dict().get("seconds_used", 0)) for d in docs)
