@@ -1676,7 +1676,35 @@ function handleUnauthorized(){
   showAuthScreen('login', hadToken ? 'Your session expired, please log in again.' : '');
 }
 
+// Single sign-on with the AI Curator Consulting Suite (suite_sso.js). While
+// the suite's switch is on, this page's own login, signup and
+// forgot-password screens are not shown: the visitor is handed to the suite
+// and comes back signed in. SSO_STATE is read once at startup; null (the
+// question could not be answered) and "off" both leave this page exactly as
+// it always was.
+let SSO_STATE = null;
+async function loadSsoState(){
+  try{
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 3000);
+    const res = await fetch(API_BASE + '/sso/status', { signal: ctl.signal });
+    clearTimeout(timer);
+    SSO_STATE = res.ok ? await res.json() : null;
+  }catch(_){ SSO_STATE = null; }
+}
+function ssoHandOver(mode){
+  if(!SSO_STATE || !SSO_STATE.enabled || mode === 'reset') return false;
+  // A team invitation travels with this browser: sso-callback.html hands it
+  // to the server once the invited person is signed in, and they join the team.
+  if(inviteToken){ try{ localStorage.setItem('consultcastai_invite', inviteToken); }catch(_){} }
+  if(mode === 'signup') location.replace(SSO_STATE.suite + '/signup.html');
+  else if(mode === 'forgot') location.replace(SSO_STATE.suite + '/forgot-password.html');
+  else location.replace('sso-start.html');
+  return true;
+}
+
 function showAuthScreen(mode, note){
+  if(ssoHandOver(mode)) return;
   setAuthMode(mode);
   setAuthNote(note);
   document.getElementById('authScreen').classList.remove('hidden');
@@ -2554,8 +2582,18 @@ async function checkAuth(){
   }
 }
 
-window.logout = function(){
+window.logout = async function(){
+  // Tell the server first (POST /auth/logout): a login made through the
+  // suite is ended there and the suite is signed out too, before this page
+  // reloads. Best effort: whether or not the server answers, this browser
+  // forgets the token.
+  const token = TOKEN;
   clearToken();
+  if(token){
+    try{
+      await fetch(API_BASE + '/auth/logout', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token }, keepalive: true });
+    }catch(_){}
+  }
   location.reload(); // simplest full reset: stops any avatar/camera/mic and lands on the login screen
 };
 
@@ -3523,6 +3561,7 @@ function handlePaymentParam(){
   stripQueryParam('payment');
 }
 
+await loadSsoState(); // before anything can show the login screen (see ssoHandOver)
 handleVerifiedParam();
 handleResetParam();
 handleInviteParam();

@@ -45,6 +45,12 @@ services:
       # emails go. (Approval itself is automatic now, on email verification.)
       - key: CONSULTCASTAI_ADMIN_EMAIL
         sync: false
+      # Single sign-on with the AI Curator Consulting Suite (suite_sso.py).
+      # The same value as AICSUITE_SSO_SECRET_CONSULTCASTAI on the suite, 32+
+      # characters. Blank keeps single sign-on off here whatever the suite
+      # says. Whether it is ON is the suite's switch, not a setting here.
+      - key: SUITE_SSO_SECRET
+        sync: false
       # Stripe: real recurring subscriptions — Pro ($129/mo or $1,316/yr, one
       # account) and Team ($599/mo or $6,110/yr, up to 5 seats pooling one
       # subscription), both renew automatically until canceled via Stripe's

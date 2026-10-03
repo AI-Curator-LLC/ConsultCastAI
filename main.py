@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 import stripe
 from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
@@ -31,7 +32,9 @@ import disposable
 import emailer
 import minutes
 import retention
+import sso_sessions
 import store
+import suite_sso
 import teams
 import users
 from models import (
@@ -190,9 +193,153 @@ def _issue_or_500(user: users.User) -> str:
         raise HTTPException(status_code=500, detail="Access control is not configured")
 
 
+# ---------------------------------------------------------------------------
+# Single sign-on with the AI Curator Consulting Suite (suite_sso.py). All of
+# it does nothing while the suite's switch is off: /sso/status answers
+# "off", the login screen stays as it is, and the guard below never fires.
+# ---------------------------------------------------------------------------
+
+_SSO_MOVED = ("Sign-in for ConsultCastAI has moved to the AI Curator Consulting Suite. "
+              "Use the same email and password there.")
+
+
+def _refuse_when_sso_on() -> None:
+    """While single sign-on is on, this app's own signup, login and
+    password routes are closed: the page hands over to the suite before
+    anyone can post here, so this only answers a direct call."""
+    if suite_sso.enabled():
+        raise HTTPException(status_code=403, detail=_SSO_MOVED)
+
+
+class SsoExchangeRequest(BaseModel):
+    code: str = Field(max_length=200)
+    code_verifier: str = Field(max_length=200)
+    # A team invitation this browser was holding when it went off to sign in.
+    invite_token: str | None = Field(default=None, max_length=200)
+
+
+class SsoBackchannelRequest(BaseModel):
+    sids: list[str] = Field(max_length=50)
+
+
+@app.get("/sso/status")
+def sso_status():
+    """Public: should the login screen hand over to the suite. `suite` is
+    where sso-start.html sends the browser."""
+    return {"enabled": suite_sso.enabled(), "suite": suite_sso.base_url(), "app": suite_sso.APP}
+
+
+def _apply_team_invite(user: users.User, invite_token: str | None) -> users.User:
+    """Join the team an invitation is for: the same checks as accepting one
+    at signup (it exists, is unused, is for this email, the team has a
+    free seat). Team members get their access through the team owner's
+    subscription, with single sign-on exactly as without it. An invitation
+    that can't be used is ignored rather than failing the sign-in."""
+    if not invite_token or user.team_id:
+        return user
+    invite = teams.get_invite_by_token(invite_token)
+    if not invite or invite.used or invite.email != user.email:
+        return user
+    team = teams.get_team(invite.team_id)
+    if not team or users.count_team_members(team.id) >= team.seat_limit:
+        return user
+    users.set_team(user.id, invite.team_id)
+    users.set_approved(user.id, True)
+    teams.mark_invite_used(invite.token)
+    return users.get_user_by_id(user.id)
+
+
+@app.post("/sso/exchange")
+def sso_exchange(req: SsoExchangeRequest, background_tasks: BackgroundTasks):
+    """The last step of a suite sign-in: sso-callback.html posts the
+    one-time code it was handed, this trades it with the suite (server to
+    server, with this app's secret) for the person, finds or creates their
+    account here, and starts a 7-day login tied to that suite sign-in.
+    Answers in the same shape as /auth/login.
+
+    An account that existed before is found by email and keeps everything
+    it had: its team, its subscription, its trial record. A new one is
+    created the way signup creates one, minus the password (random, never
+    told to anyone) and the per-IP cap (the suite already limited sign-up)."""
+    if not suite_sso.enabled():
+        raise HTTPException(409, "Single sign-on is switched off")
+    try:
+        person = suite_sso.exchange(req.code, req.code_verifier)
+    except suite_sso.SuiteError as exc:
+        print(f"[consultcastai] sso exchange refused: {exc.code}")
+        raise HTTPException(400, "This sign-in could not be completed. Please try again.")
+    email = users.normalize_email(person["email"])
+    user = users.get_user_by_suite_id(person["suite_user_id"]) or users.get_user_by_email(email)
+    if user is None:
+        if not users.is_valid_email(email) or disposable.is_disposable(email):
+            raise HTTPException(400, "Please use a permanent email address. Disposable email services aren't accepted.")
+        try:
+            user = users.create_user(email, users.hash_password(secrets.token_urlsafe(32)), None)
+        except users.EmailTaken:
+            user = users.get_user_by_email(email)  # two tabs arriving at once
+        else:
+            # This email's last account was suspended when it was deleted:
+            # the new one starts suspended too, as at signup.
+            if users.email_was_suspended(email):
+                users.set_suspended(user.id, True)
+            users.promote_if_admin_bootstrap(user.id, user.email)
+            if person.get("name"):
+                users.update_profile(user.id, person["name"], None)
+            background_tasks.add_task(emailer.send_admin_notification_email, user.email)
+    users.set_suite_user_id(user.id, person["suite_user_id"])
+    # The suite already proved the mailbox, which is what approves an account here.
+    if person.get("email_verified") and not user.email_verified:
+        users.mark_verified(user.id)
+    user = _apply_team_invite(users.get_user_by_id(user.id), req.invite_token)
+    try:
+        token = users.issue_token(user, sso_jti=sso_sessions.create(user.id, person["sid"]))
+    except RuntimeError as exc:
+        print(f"[consultcastai] cannot issue token: {exc}")
+        raise HTTPException(status_code=500, detail="Access control is not configured")
+    return {"token": token, "api_token": token, "email": user.email,
+            "email_verified": user.email_verified, "approved": user.approved}
+
+
+@app.post("/sso/backchannel-logout")
+def sso_backchannel_logout(req: SsoBackchannelRequest, request: Request):
+    """The suite, server to server: these suite sign-ins ended (the person
+    signed out there or in another app), so end the logins that came from
+    them. Proven by this app's shared secret; nothing here uses a bearer
+    token."""
+    if not suite_sso.secret_matches(request.headers.get("x-sso-secret")):
+        raise HTTPException(403, "Forbidden")
+    for sid in req.sids:
+        sso_sessions.end_by_sid(sid)
+    return {"ok": True}
+
+
+@app.post("/auth/logout")
+def logout(request: Request):
+    """Ends a login made through the suite, on the server, and signs the
+    person out of the suite (and through it the other apps). Done BEFORE
+    answering: the page goes straight back to sign-in, and the suite must
+    already have forgotten the person or it would sign them right back in.
+    The app's own JWT login has nothing on the server to end: the browser
+    just forgets it, as before. Always 200."""
+    authorization = request.headers.get("authorization", "")
+    payload = None
+    if authorization.startswith("Bearer "):
+        try:
+            payload = users.decode_token(authorization.split(" ", 1)[1].strip())
+        except RuntimeError:
+            payload = None
+    if payload and payload.get("sso"):
+        sid = sso_sessions.sid_for(payload.get("jti"))
+        sso_sessions.end(payload.get("jti"))
+        if sid and suite_sso.enabled():
+            suite_sso.logout(sid)
+    return {"ok": True}
+
+
 @app.post("/auth/signup")
 @limiter.limit("10/hour")  # every attempt, including ones that fail validation; accounts actually created are capped separately at SIGNUPS_PER_IP_PER_DAY below
 def signup(req: SignupRequest, background_tasks: BackgroundTasks, request: Request):
+    _refuse_when_sso_on()
     email = users.normalize_email(req.email)
     if not users.is_valid_email(email):
         raise HTTPException(400, "Invalid email address")
@@ -278,6 +425,7 @@ def signup(req: SignupRequest, background_tasks: BackgroundTasks, request: Reque
 @app.post("/auth/login")
 @limiter.limit("5/minute")
 def login(req: LoginRequest, request: Request):
+    _refuse_when_sso_on()
     user = users.get_user_by_email(req.email)
     if not user:
         users.burn_password_check(req.password)  # same response time whether or not the email exists
@@ -306,6 +454,7 @@ def forgot_password(req: ForgotPasswordRequest, background_tasks: BackgroundTask
     """Answers identically whether or not the email has an account, so this
     form can't be used to find out who's registered. The reset email (if any)
     goes out after the response."""
+    _refuse_when_sso_on()
     generic = {"ok": True}
     email = users.normalize_email(req.email)
     if not users.is_valid_email(email):
@@ -320,6 +469,7 @@ def forgot_password(req: ForgotPasswordRequest, background_tasks: BackgroundTask
 
 @app.post("/auth/reset-password")
 def reset_password(req: ResetPasswordRequest):
+    _refuse_when_sso_on()
     user = users.get_user_by_reset_token(req.token)
     if not user:
         raise HTTPException(400, "This reset link is invalid or has expired")
@@ -464,6 +614,7 @@ def update_profile(req: UpdateProfileRequest, user: auth.AuthUser = Depends(auth
 
 @app.post("/auth/change-password")
 def change_password(req: ChangePasswordRequest, user: auth.AuthUser = Depends(auth.require_approved)):
+    _refuse_when_sso_on()
     account = users.get_user_by_id(user.rep_id)
     if not account or not users.verify_password(req.current_password, account.password_hash):
         raise HTTPException(401, "Current password is incorrect")

@@ -156,7 +156,10 @@ def _jwt_secret() -> str:
     return _DEV_JWT_SECRET  # local dev only, never reachable in production
 
 
-def issue_token(user: User) -> str:
+def issue_token(user: User, sso_jti: str | None = None) -> str:
+    """sso_jti: this login came through the suite (single sign-on). The
+    token then names its sso_sessions row, and that row, not the 30 days
+    below, decides how long it is good for (sso_sessions.py)."""
     payload = {
         "sub": user.id,
         "email": user.email,
@@ -164,6 +167,9 @@ def issue_token(user: User) -> str:
         "tv": user.token_version,
         "exp": datetime.now(timezone.utc) + _JWT_TTL,
     }
+    if sso_jti:
+        payload["sso"] = True
+        payload["jti"] = sso_jti
     return jwt.encode(payload, _jwt_secret(), algorithm="HS256")
 
 
@@ -244,6 +250,9 @@ _ADDED_COLUMNS = [
     ("stripe_subscription_id", "TEXT"),
     ("team_id", "TEXT"),
     ("suspended", "BOOLEAN NOT NULL DEFAULT FALSE"),
+    # Single sign-on: the person's AI Curator Consulting Suite account, set
+    # the first time they arrive through the suite (matched by email).
+    ("suite_user_id", "TEXT"),
 ]
 
 # Which emails have already had a trial (see the "trial records" section
@@ -273,6 +282,19 @@ _SUSPENDED_EMAILS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS suspended_emails (
     email_hash TEXT PRIMARY KEY,
     created_at TEXT NOT NULL
+)
+"""
+
+# Logins that came through the suite (sso_sessions.py). Same DDL for
+# SQLite and Postgres.
+_SSO_SESSIONS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS sso_sessions (
+    jti TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    sid TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    last_checked_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL
 )
 """
 
@@ -317,6 +339,7 @@ def _ensure_schema() -> None:
             cur.execute(_TRIAL_RECORDS_SCHEMA)
             cur.execute(_SIGNUP_EVENTS_SCHEMA)
             cur.execute(_SUSPENDED_EMAILS_SCHEMA)
+            cur.execute(_SSO_SESSIONS_SCHEMA)
             if _LOCAL:
                 cur.execute("PRAGMA table_info(users)")
                 existing = {row["name"] for row in cur.fetchall()}
@@ -454,6 +477,16 @@ def get_user_by_email(email: str) -> User | None:
 
 def get_user_by_id(user_id: str) -> User | None:
     return _row_to_user(_run("SELECT * FROM users WHERE id = ?", (user_id,), fetch_one=True))
+
+
+def get_user_by_suite_id(suite_user_id: str) -> User | None:
+    if not suite_user_id:
+        return None
+    return _row_to_user(_run("SELECT * FROM users WHERE suite_user_id = ?", (suite_user_id,), fetch_one=True))
+
+
+def set_suite_user_id(user_id: str, suite_user_id: str) -> None:
+    _run("UPDATE users SET suite_user_id = ? WHERE id = ?", (suite_user_id, user_id))
 
 
 def get_user_by_verification_token(token: str) -> User | None:

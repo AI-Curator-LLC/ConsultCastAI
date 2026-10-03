@@ -31,6 +31,8 @@ from fastapi import Depends, Header, HTTPException
 import minutes
 import store
 import teams
+import sso_sessions
+import suite_sso
 import users
 
 _DEV_AUTH_BYPASS_ENV = "CONSULTCASTAI_DEV_AUTH_BYPASS"  # "1"/"0", overrides the storage-based default
@@ -82,6 +84,17 @@ def verify_user(authorization: str | None = Header(default=None)) -> AuthUser:
     # issued before token_version existed carry no "tv" and count as 0.
     account = users.get_user_by_id(payload["sub"])
     if not account or account.token_version != payload.get("tv", 0):
+        raise HTTPException(status_code=401, detail="Invalid or expired session, please log in again")
+
+    # Single sign-on (sso_sessions.py). While the suite's switch is on, only
+    # a login that came through the suite counts, and it is rechecked with
+    # the suite now and then. While it is off the app's own logins work as
+    # always, and a suite login still inside its 7 days keeps working too.
+    sso_on = suite_sso.enabled()
+    if payload.get("sso"):
+        if not sso_sessions.alive(payload.get("jti"), account.id, ask_suite=sso_on):
+            raise HTTPException(status_code=401, detail="Invalid or expired session, please log in again")
+    elif sso_on:
         raise HTTPException(status_code=401, detail="Invalid or expired session, please log in again")
 
     return AuthUser(rep_id=account.id, email=account.email, is_admin=account.is_admin)

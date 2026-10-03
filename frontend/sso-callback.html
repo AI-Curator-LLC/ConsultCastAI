@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex" />
+<meta name="referrer" content="no-referrer" />
+<title>ConsultCastAI: Signing in</title>
+<style>
+  body{margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px;
+    background:#050611; color:#eef0ff; font-family:Inter,-apple-system,"Segoe UI",sans-serif; text-align:center;}
+  p{color:#B4BAE0; line-height:1.5;}
+  a{color:#8aa3ff;}
+</style>
+</head>
+<body>
+<!-- Single sign-on: the last step, where the suite sends the browser back. See suite_sso.js. -->
+<div>
+  <p id="ssoMsg">Signing you in...</p>
+  <p><a id="ssoRetry" href="index.html" hidden>Start again</a></p>
+</div>
+<script src="suite_sso.js"></script>
+<script>SuiteSSO.finish();</script>
+</body>
+</html>

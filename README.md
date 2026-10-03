@@ -548,3 +548,15 @@ architectural pattern (Claude + live avatar, rule-based live coaching, a
 persona/scenario content model) documented in the original ConsultCastAI
 Founding Document, but all content, prompts, and code here are written
 fresh for this product, not reused from any client engagement.
+
+## Single sign-on with the AI Curator Consulting Suite
+
+Built 2026-10-03, and **off** until the suite's administrator turns it on (Admin > Accounts on the suite, no deploy). While it is off this app's own signup, login and password reset work exactly as before; nothing below runs.
+
+- `suite_sso.py` talks to the suite's server; `sso_sessions.py` holds the logins that came through the suite; `frontend/suite_sso.js`, `frontend/sso-start.html` and `frontend/sso-callback.html` are the browser's side. The design is `docs/SSO_DESIGN.md` in the aicsuite repo.
+- Setting on the API service in Render: `SUITE_SSO_SECRET`, the same value as `AICSUITE_SSO_SECRET_CONSULTCASTAI` on the suite, 32+ characters. Blank keeps single sign-on off here whatever the suite says. It is in `render.yaml`, but a setting added after the service was created is not asked for again: add it by hand. `SUITE_BASE_URL` is optional and defaults to the live suite.
+- When it is on: the login screen hands over to the suite; a login made through the suite lasts 7 days and is renewed in the background while the suite sign-in is still good; Log out signs out of the suite and the other apps. The app's own 30-day logins are refused, and work again the moment the switch is turned off.
+- Teams are unchanged. A member is found by email and keeps their team, so their access still comes through the team owner's subscription. A new teammate opens the invitation link as before; the invitation is kept in the browser while they create or sign in to their suite account, and they join the team when they arrive back here.
+- An account created through the suite has no password of its own here, so "Delete account" (which asks for the current password) does not work for it yet.
+- This app has one language, so the suite account's language is not applied here.
+- Tests: `python tests/test_sso.py` (throwaway files, the suite replaced by a stand-in; no network).
