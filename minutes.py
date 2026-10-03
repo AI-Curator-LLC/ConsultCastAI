@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 import store
 import users
 
-TRIAL_TOTAL_SEC = int(os.environ.get("TRIAL_TOTAL_MINUTES", "30")) * 60
+TRIAL_TOTAL_SEC = int(os.environ.get("TRIAL_TOTAL_MINUTES", "10")) * 60
 TRIAL_SESSION_SEC = int(os.environ.get("TRIAL_SESSION_MINUTES", "10")) * 60
 # How long before a trial session's limit the "time's nearly up" warning shows.
 TRIAL_WARNING_SEC = int(os.environ.get("TRIAL_WARNING_SECONDS", "60"))

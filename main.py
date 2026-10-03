@@ -557,7 +557,7 @@ def me(user: auth.AuthUser = Depends(auth.verify_user)):
         "is_admin": account.is_admin, "approved": account.approved,
         "suspended": account.suspended,
         "team_id": account.team_id, "is_team_owner": is_team_owner,
-        # None unless this is a trial account; drives the "N of 30 trial
+        # None unless this is a trial account; drives the "N of 10 trial
         # minutes left" counter and the upgrade prompt.
         "trial": minutes.trial_status(account),
     }

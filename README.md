@@ -415,7 +415,7 @@ what every new account gets as soon as it verifies, until it subscribes.
 
 | Rule | Value |
 |---|---|
-| Trial practice time in total | `TRIAL_TOTAL_MINUTES` (30) |
+| Trial practice time in total | `TRIAL_TOTAL_MINUTES` (10) |
 | Longest single trial session | `TRIAL_SESSION_MINUTES` (10), or whatever is left of the trial if that's less |
 | Warning before a trial session ends | `TRIAL_WARNING_SECONDS` (60) |
 | Trial counts as used up | less than a minute left (the counter reads in whole minutes) |
@@ -451,7 +451,7 @@ nobody is locked out by it). `/turn` refuses with a 402
 limit is never charged, so a slow request or a tab left open can't cost a
 trial more than the session's limit.
 
-**Frontend.** The header shows "18 of 30 trial minutes left" on the start
+**Frontend.** The header shows "8 of 10 trial minutes left" on the start
 screen and through the session, counting down live; a pinned copy appears
 while the header is scrolled out of view mid-session. A trial session warns
 at one minute left and ends itself at the limit through the same path as

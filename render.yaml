@@ -113,7 +113,7 @@ services:
       # much practice in total, at most this much per session. Defaults
       # match these values already; listed here so they're one edit away.
       - key: TRIAL_TOTAL_MINUTES
-        value: "30"
+        value: "10"
       - key: TRIAL_SESSION_MINUTES
         value: "10"
       - key: TRIAL_WARNING_SECONDS
