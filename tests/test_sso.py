@@ -171,6 +171,16 @@ assert info["team_id"] == "team-1" and info["is_team_owner"] is False and info["
 assert users.get_user_by_suite_id("suite-member@acme-consulting.com").id == member.id
 print("ok 5  existing team member linked by email: still on the team, access through the owner")
 
+# the member had no name of its own, so that sign-in gave it the suite's; a name it has (and its company) is kept
+assert not member.name and linked.name == "Ada Lovelace"
+users.update_profile(member.id, None, "Acme Consulting")
+sso_login("member@acme-consulting.com", "sid-member-name-1", name="Mia Member")
+named = users.get_user_by_email("member@acme-consulting.com")
+assert named.name == "Mia Member" and named.company == "Acme Consulting"
+sso_login("member@acme-consulting.com", "sid-member-name-2", name="Somebody Else")
+assert users.get_user_by_email("member@acme-consulting.com").name == "Mia Member"
+print("ok 5b a nameless account takes the suite's name once; a name set here is never replaced")
+
 own = sso_login("owner@acme-consulting.com", "sid-owner-1")
 assert me(own["token"]).json()["is_team_owner"] is True
 print("ok 6  the team owner is still the owner")

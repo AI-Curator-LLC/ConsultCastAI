@@ -287,6 +287,9 @@ def sso_exchange(req: SsoExchangeRequest, background_tasks: BackgroundTasks):
                 users.update_profile(user.id, person["name"], None)
             background_tasks.add_task(emailer.send_admin_notification_email, user.email)
     users.set_suite_user_id(user.id, person["suite_user_id"])
+    # An account with no name of its own takes the suite's; a name set here is never replaced.
+    if (person.get("name") or "").strip() and not (user.name or "").strip():
+        users.update_profile(user.id, person["name"].strip(), user.company)
     # The suite already proved the mailbox, which is what approves an account here.
     if person.get("email_verified") and not user.email_verified:
         users.mark_verified(user.id)
