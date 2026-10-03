@@ -631,6 +631,7 @@
           <div class="profile-menu-divider" role="separator"></div>
           <a id="userGuideMenuLink" role="menuitem" target="_blank" rel="noopener noreferrer" href="#">User Guide<span class="sr-only"> (opens in a new tab)</span></a>
           <a id="userAgreementMenuLink" role="menuitem" target="_blank" rel="noopener noreferrer" href="#">User Agreement<span class="sr-only"> (opens in a new tab)</span></a>
+          <a id="privacyMenuLink" role="menuitem" target="_blank" rel="noopener noreferrer" href="#">Privacy Notice<span class="sr-only"> (opens in a new tab)</span></a>
           <button id="logoutBtn" class="danger" role="menuitem" onclick="logout()">Log out</button>
         </div>
       </div>
@@ -1026,7 +1027,7 @@
       <div class="field hidden" id="authAgreeField">
         <label class="auth-agree-label">
           <input type="checkbox" id="authAgreeCheckbox" />
-          <span>I agree to the <a id="authAgreeLink" href="#" target="_blank" rel="noopener noreferrer">User Agreement<span class="sr-only"> (opens in a new tab)</span></a></span>
+          <span>I agree to the <a id="authAgreeLink" href="#" target="_blank" rel="noopener noreferrer">User Agreement<span class="sr-only"> (opens in a new tab)</span></a>. How we handle your information: <a id="authPrivacyLink" href="#" target="_blank" rel="noopener noreferrer">Privacy Notice<span class="sr-only"> (opens in a new tab)</span></a></span>
         </label>
       </div>
       <p class="auth-forgot" id="authForgotWrap">
@@ -1153,6 +1154,9 @@ let API_BASE = localStorage.getItem('consultcastai_base') || (_IS_LOCAL ? 'http:
 // can never drift apart.
 const USER_GUIDE_URL = 'https://ai-curator.ai/consultcastai-user-guide';
 const USER_AGREEMENT_URL = 'https://ai-curator.ai/consultcastaiua';
+const PRIVACY_URL = 'https://ai-curator.ai/privacy-policy';
+document.getElementById('privacyMenuLink').href = PRIVACY_URL;
+document.getElementById('authPrivacyLink').href = PRIVACY_URL;
 document.getElementById('userGuideMenuLink').href = USER_GUIDE_URL;
 document.getElementById('userAgreementMenuLink').href = USER_AGREEMENT_URL;
 document.getElementById('authAgreeLink').href = USER_AGREEMENT_URL;
