@@ -34,6 +34,11 @@ POST_CANCEL_GRACE_DAYS = int(os.environ.get("POST_CANCEL_GRACE_DAYS", "90"))
 
 _RUN_INTERVAL_SEC = 24 * 60 * 60
 
+# When the job last finished a pass in this process, and what it did
+# (counts only). Shown by GET /version, so "is the cleanup actually running
+# in production" can be answered from outside without the server log.
+LAST_RUN: dict = {"at": None, "counts": None}
+
 
 def _parse_utc(value: str | None) -> datetime | None:
     if not value:
@@ -132,6 +137,8 @@ def run_once() -> dict:
         "sessions_deleted_lapsed_subscription": lapsed_deleted,
     }
     print(f"[consultcastai] retention cleanup: {counts}")
+    LAST_RUN["at"] = datetime.now(timezone.utc).isoformat()
+    LAST_RUN["counts"] = counts
     return counts
 
 

@@ -91,6 +91,24 @@ def send_verification_email(to_email: str, token: str) -> None:
     )
 
 
+def send_delete_account_email(to_email: str, token: str) -> None:
+    """Confirms an account deletion for someone who has no password of
+    their own here (they sign in through the suite). Nothing is deleted
+    until the link is opened and confirmed."""
+    delete_url = f"{frontend_url()}/?delete_token={token}"
+    _send(
+        to_email,
+        "Confirm deleting your ConsultCastAI account",
+        "<p>We got a request to delete your ConsultCastAI account.</p>"
+        f'<p>To go ahead, open this link and confirm: <a href="{delete_url}">{delete_url}</a></p>'
+        "<p>This deletes your account, your practice sessions and your usage records, and cannot be undone. "
+        "The link works once and expires in 1 hour. If you didn't ask for this, ignore this email and "
+        "nothing will be deleted.</p>",
+        dev_log_link=delete_url,
+        what="account deletion",
+    )
+
+
 def send_password_reset_email(to_email: str, token: str) -> None:
     reset_url = f"{frontend_url()}/?reset_token={token}"
     _send(

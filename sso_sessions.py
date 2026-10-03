@@ -102,6 +102,11 @@ def end(jti: str | None) -> None:
         users._run("DELETE FROM sso_sessions WHERE jti = ?", (jti,))
 
 
+def end_for_user(user_id: str) -> None:
+    """Account deletion: every suite login this account has."""
+    users._run("DELETE FROM sso_sessions WHERE user_id = ?", (user_id,))
+
+
 def end_by_sid(sid: str) -> None:
     """The suite's back-channel sign-out: end every login that came from
     this suite sign-in."""

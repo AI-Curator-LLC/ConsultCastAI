@@ -969,16 +969,19 @@
       <div id="dangerZoneSection">
         <p class="profile-section-title" style="color:var(--danger);">Danger zone</p>
         <p class="auth-note">Deletes your account, sessions, and usage records immediately — this cannot be undone. If you have an active subscription, cancel it first via Manage subscription.</p>
-        <div class="field">
+        <div class="field" id="deleteAccountPasswordField">
           <span class="field-label">Current password</span>
           <input class="text-input" id="deleteAccountPasswordInput" type="password" autocomplete="current-password" />
         </div>
+        <p class="auth-note hidden" id="deleteAccountLinkNote">You sign in through the AI Curator Consulting Suite, so there is no password to check here. We'll email you a link to confirm.</p>
         <div class="field">
           <span class="field-label">Type DELETE to confirm</span>
           <input class="text-input" id="deleteAccountConfirmInput" placeholder="DELETE" />
         </div>
         <p class="auth-error hidden" id="deleteAccountError"></p>
         <button class="btn danger block" id="deleteAccountBtn" onclick="submitDeleteAccount()">Delete my account permanently</button>
+        <button class="btn ghost block" id="deleteAccountLinkBtn" onclick="emailDeleteAccountLink()">Email me a link to confirm instead</button>
+        <p class="auth-note hidden" id="deleteAccountLinkSent">Check your email. The link works once and expires in 1 hour. Nothing is deleted until you open it and confirm.</p>
       </div>
 
       <div class="end-row">
@@ -1928,6 +1931,13 @@ window.openProfile = async function(){
     // mode's synthetic "dev" user doesn't have — see /me/delete-account's
     // explicit refusal for is_dev_bypass().
     document.getElementById('dangerZoneSection').classList.toggle('hidden', !!me.dev_bypass);
+    // With single sign-on on, the password lives at the suite: deleting is
+    // confirmed by an emailed link instead (see emailDeleteAccountLink).
+    const viaSuite = !!(SSO_STATE && SSO_STATE.enabled);
+    document.getElementById('deleteAccountPasswordField').classList.toggle('hidden', viaSuite);
+    document.getElementById('deleteAccountBtn').classList.toggle('hidden', viaSuite);
+    document.getElementById('deleteAccountLinkNote').classList.toggle('hidden', !viaSuite);
+    document.getElementById('deleteAccountLinkSent').classList.add('hidden');
   }catch(e){
     console.warn('Could not load profile:', e.message);
   }
@@ -2117,6 +2127,55 @@ window.submitDeleteAccount = async function(){
     btn.disabled = false;
   }
 };
+
+// Deleting the account without a password: the server emails a link to
+// the account's own address, and opening it (handleDeleteParam) confirms.
+window.emailDeleteAccountLink = async function(){
+  const errEl = document.getElementById('deleteAccountError');
+  errEl.classList.add('hidden');
+  const confirmText = document.getElementById('deleteAccountConfirmInput').value.trim();
+  if(confirmText !== 'DELETE'){
+    errEl.textContent = 'Type DELETE (all caps) to confirm.';
+    errEl.classList.remove('hidden');
+    return;
+  }
+  const btn = document.getElementById('deleteAccountLinkBtn');
+  btn.disabled = true;
+  try{
+    const res = await fetch(API_BASE + '/me/delete-account/email-link', {
+      method: 'POST', headers: { 'Authorization': 'Bearer ' + TOKEN },
+    });
+    const body = await res.json().catch(() => ({}));
+    if(!res.ok) throw new Error(body.detail || `${res.status}`);
+    document.getElementById('deleteAccountLinkSent').classList.remove('hidden');
+  }catch(e){
+    errEl.textContent = 'Could not send the link: ' + e.message;
+    errEl.classList.remove('hidden');
+  }
+  btn.disabled = false;
+};
+
+// The emailed link lands here with ?delete_token=...: one more "are you
+// sure", then the account is deleted. The token leaves the address bar at once.
+async function handleDeleteParam(){
+  const token = new URLSearchParams(location.search).get('delete_token');
+  if(!token) return;
+  stripQueryParam('delete_token');
+  if(!window.confirm('Delete your ConsultCastAI account permanently? Your account, practice sessions and usage records are deleted. This cannot be undone.')) return;
+  try{
+    const res = await fetch(API_BASE + '/me/delete-account/confirm', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if(!res.ok) throw new Error(body.detail || `${res.status}`);
+    clearToken();
+    window.alert('Your ConsultCastAI account has been deleted.');
+    location.replace(location.pathname);
+  }catch(e){
+    window.alert('Could not delete the account: ' + e.message);
+  }
+}
 
 // --- Debrief History ---------------------------------------------------
 function formatDuration(sec){
@@ -3566,6 +3625,7 @@ function handlePaymentParam(){
 }
 
 await loadSsoState(); // before anything can show the login screen (see ssoHandOver)
+await handleDeleteParam();
 handleVerifiedParam();
 handleResetParam();
 handleInviteParam();

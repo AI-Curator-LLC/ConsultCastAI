@@ -313,6 +313,29 @@ def sso_backchannel_logout(req: SsoBackchannelRequest, request: Request):
     return {"ok": True}
 
 
+class SsoDeleteAccountRequest(BaseModel):
+    suite_user_id: str = Field(max_length=64)
+    email: str = Field(max_length=320)
+
+
+@app.post("/sso/delete-account")
+def sso_delete_account(req: SsoDeleteAccountRequest, request: Request):
+    """The suite, server to server: its administrator deleted this person
+    (Admin > Accounts), so delete their account here too. Proven by this
+    app's shared secret. Found by the suite account it is linked to, else
+    by email. An administrator's deletion is not held back by a
+    subscription: cancelling that in Stripe is theirs to do first. Answers
+    whether there was an account to delete."""
+    if not suite_sso.secret_matches(request.headers.get("x-sso-secret")):
+        raise HTTPException(403, "Forbidden")
+    account = users.get_user_by_suite_id(req.suite_user_id) or users.get_user_by_email(req.email)
+    if account is None:
+        return {"deleted": False}
+    _delete_account_now(account)
+    print(f"[consultcastai] account {account.id} deleted on the suite's request")
+    return {"deleted": True}
+
+
 @app.post("/auth/logout")
 def logout(request: Request):
     """Ends a login made through the suite, on the server, and signs the
@@ -628,8 +651,11 @@ def change_password(req: ChangePasswordRequest, user: auth.AuthUser = Depends(au
 @app.get("/version")
 def version():
     """Which build is running, so "has the deploy landed?" can be answered
-    from outside without reading the server log. Nothing but the marker."""
-    return {"build": BUILD_MARKER}
+    from outside without reading the server log. The marker, and when the
+    data-retention cleanup last ran (counts only)."""
+    return {"build": BUILD_MARKER,
+            # when the data-retention cleanup last finished a pass, and its counts (retention.py)
+            "retention_last_run": retention.LAST_RUN["at"], "retention_counts": retention.LAST_RUN["counts"]}
 
 
 @app.get("/personas")
@@ -1231,37 +1257,30 @@ def export_my_data(user: auth.AuthUser = Depends(auth.verify_user)):
     }
 
 
-@app.post("/me/delete-account")
-def delete_account(req: DeleteAccountRequest, user: auth.AuthUser = Depends(auth.verify_user)):
-    """Deletes the account, all of its sessions, and its usage records,
-    immediately and irreversibly. Requires the current password (same check
-    as /auth/change-password). Refused while a subscription is genuinely
-    active — deleting the account out from under a live Stripe subscription
-    would keep billing them with no account left to use it. A team owner is
-    held to the same rule via the team's own subscription; a regular
-    (non-owner) team member is always allowed to leave, which simply frees
-    their seat — they were never the one being billed. The Stripe customer
-    record itself is deliberately NOT deleted: Stripe keeps billing history
-    for tax purposes independent of this account existing."""
-    if auth.is_dev_bypass():
-        raise HTTPException(400, "Account deletion isn't available in local dev bypass mode")
-    account = users.get_user_by_id(user.rep_id)
-    if not account or not users.verify_password(req.password, account.password_hash):
-        raise HTTPException(401, "Current password is incorrect")
-
+def _refuse_delete_while_subscribed(account: users.User) -> None:
+    """Deleting the account out from under a live Stripe subscription would
+    keep billing them with no account left to use it. A team owner is held
+    to the same rule via the team's own subscription; a regular (non-owner)
+    team member is always allowed to leave, which simply frees their seat:
+    they were never the one being billed."""
     if account.team_id:
         team = teams.get_team(account.team_id)
         is_owner = bool(team and team.owner_user_id == account.id)
         # Same predicate main.py's other billing checks already use
-        # (teams.team_subscription_active) rather than a separate
-        # "status == canceled" check, so this stays consistent with every
-        # other "is this subscription currently active" decision in the
-        # app: refuse while it reads as active, allow once it doesn't.
+        # (teams.team_subscription_active), so this stays consistent with
+        # every other "is this subscription currently active" decision.
         if is_owner and team and teams.team_subscription_active(team):
             raise HTTPException(400, "Cancel your team's subscription first via Manage subscription, then you can delete your account")
     elif users.subscription_active(account):
         raise HTTPException(400, "Cancel your subscription first via Manage subscription, then you can delete your account")
 
+
+def _delete_account_now(account: users.User) -> None:
+    """Deletes the account, all of its sessions, its usage records, its
+    suite logins and any team invitations sent to its address, immediately
+    and irreversibly. The Stripe customer record itself is deliberately NOT
+    deleted: Stripe keeps billing history for tax purposes independent of
+    this account existing."""
     # A trial is per email: before the ledger goes, make sure the fact that
     # this email used one is on record (it normally already is, from the
     # first charge; this covers trial time used before that record existed),
@@ -1276,7 +1295,64 @@ def delete_account(req: DeleteAccountRequest, user: auth.AuthUser = Depends(auth
 
     store.delete_for_rep(account.id)
     store.delete_usage_records_for_rep(account.id)
+    sso_sessions.end_for_user(account.id)
+    teams.delete_invites_for_email(account.email)
     users.delete_user(account.id)
+
+
+@app.post("/me/delete-account")
+def delete_account(req: DeleteAccountRequest, user: auth.AuthUser = Depends(auth.verify_user)):
+    """Deletes the account (see _delete_account_now), confirmed with the
+    current password. Refused while a subscription is genuinely active. An
+    account that signs in through the suite has no password of its own
+    here: it confirms by emailed link instead, below."""
+    if auth.is_dev_bypass():
+        raise HTTPException(400, "Account deletion isn't available in local dev bypass mode")
+    account = users.get_user_by_id(user.rep_id)
+    if not account or not users.verify_password(req.password, account.password_hash):
+        raise HTTPException(401, "Current password is incorrect")
+    _refuse_delete_while_subscribed(account)
+    _delete_account_now(account)
+    return {"message": "Account deleted"}
+
+
+class DeleteAccountConfirmRequest(BaseModel):
+    token: str = Field(max_length=200)
+
+
+@app.post("/me/delete-account/email-link")
+@limiter.limit("3/hour")
+def delete_account_email_link(background_tasks: BackgroundTasks, request: Request,
+                              user: auth.AuthUser = Depends(auth.verify_user)):
+    """Deleting the account without a password: emails a confirmation link
+    to the account's own address. For anyone who signs in through the suite
+    (their password lives there, not here), and for anyone who would rather
+    confirm by email. Nothing is deleted until the link is opened and
+    confirmed. Refused up front while a subscription is active, so nobody
+    waits for an email that can't work."""
+    if auth.is_dev_bypass():
+        raise HTTPException(400, "Account deletion isn't available in local dev bypass mode")
+    account = users.get_user_by_id(user.rep_id)
+    if not account:
+        raise HTTPException(401, "Account no longer exists, please log in again")
+    _refuse_delete_while_subscribed(account)
+    token = users.create_delete_token(account.id)
+    background_tasks.add_task(emailer.send_delete_account_email, account.email, token)
+    return {"ok": True}
+
+
+@app.post("/me/delete-account/confirm")
+@limiter.limit("10/hour")
+def delete_account_confirm(req: DeleteAccountConfirmRequest, request: Request):
+    """The emailed link, confirmed. The token is single use (it is deleted
+    with the account), lasts 1 hour, and proves the person reads the
+    account's mailbox, which is why no login is asked for here: the link
+    may be opened on another device."""
+    account = users.get_user_by_delete_token(req.token)
+    if not account:
+        raise HTTPException(400, "This link is invalid or has expired. Request a new one from Account settings.")
+    _refuse_delete_while_subscribed(account)
+    _delete_account_now(account)
     return {"message": "Account deleted"}
 
 

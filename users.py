@@ -253,6 +253,10 @@ _ADDED_COLUMNS = [
     # Single sign-on: the person's AI Curator Consulting Suite account, set
     # the first time they arrive through the suite (matched by email).
     ("suite_user_id", "TEXT"),
+    # Deleting the account by emailed link (for an account that has no
+    # password of its own here). Only the token's hash is stored.
+    ("delete_token_hash", "TEXT"),
+    ("delete_token_expires", "TEXT"),
 ]
 
 # Which emails have already had a trial (see the "trial records" section
@@ -552,6 +556,33 @@ def create_reset_token(user_id: str) -> str:
         (_hash_reset_token(token), expires, user_id),
     )
     return token
+
+
+def create_delete_token(user_id: str) -> str:
+    """Issues a fresh single-use token for deleting the account by emailed
+    link (replacing any earlier one) and returns the raw token, which
+    exists only in the email. Same lifetime as a password reset link."""
+    token = secrets.token_urlsafe(32)
+    expires = (datetime.now(timezone.utc) + RESET_TTL).isoformat()
+    _run(
+        "UPDATE users SET delete_token_hash = ?, delete_token_expires = ? WHERE id = ?",
+        (_hash_reset_token(token), expires, user_id),
+    )
+    return token
+
+
+def get_user_by_delete_token(token: str) -> User | None:
+    """The account a still-valid delete link belongs to, else None
+    (unknown, already used, or expired)."""
+    if not token:
+        return None
+    row = _run("SELECT * FROM users WHERE delete_token_hash = ?", (_hash_reset_token(token),), fetch_one=True)
+    if row is None:
+        return None
+    expires = _parse_utc(row["delete_token_expires"])
+    if not expires or expires < datetime.now(timezone.utc):
+        return None
+    return _row_to_user(row)
 
 
 def get_user_by_reset_token(token: str) -> User | None:

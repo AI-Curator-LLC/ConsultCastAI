@@ -256,4 +256,49 @@ other_jti = sso_sessions.create(users.get_user_by_email("solo@acme-consulting.co
 assert sso_sessions.alive(other_jti, member.id, ask_suite=False) is False
 print("ok 13 a login row only counts for its own account")
 
+# ---- 6. deleting an account that has no password of its own here ----
+suite.switch(True)
+sent = []
+import emailer  # noqa: E402
+emailer.send_delete_account_email = lambda to, token: sent.append((to, token))
+who = sso_login("leaver@acme-consulting.com", "sid-leaver-1")
+leaver = users.get_user_by_email("leaver@acme-consulting.com")
+teams.create_invite("team-1", "leaver@acme-consulting.com", "invite-leaver")
+assert client.post("/me/delete-account/email-link").status_code == 401
+assert client.post("/me/delete-account/email-link", headers=bearer(who["token"])).json() == {"ok": True}
+assert sent and sent[-1][0] == "leaver@acme-consulting.com"
+link_token = sent[-1][1]
+assert users.get_user_by_email("leaver@acme-consulting.com") is not None       # nothing deleted yet
+assert client.post("/me/delete-account/confirm", json={"token": "wrong"}).status_code == 400
+assert client.post("/me/delete-account/confirm", json={"token": link_token}).json() == {"message": "Account deleted"}
+assert users.get_user_by_email("leaver@acme-consulting.com") is None
+assert me(who["token"]).status_code == 401
+assert users._run("SELECT COUNT(*) AS n FROM sso_sessions WHERE user_id = ?", (leaver.id,), fetch_one=True)["n"] == 0
+assert teams.get_invite_by_token("invite-leaver") is None
+assert client.post("/me/delete-account/confirm", json={"token": link_token}).status_code == 400   # single use
+# an expired link does nothing
+late = sso_login("late@acme-consulting.com", "sid-late-1")
+client.post("/me/delete-account/email-link", headers=bearer(late["token"]))
+users._run("UPDATE users SET delete_token_expires = ? WHERE email = ?",
+           ((datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat(), "late@acme-consulting.com"))
+assert client.post("/me/delete-account/confirm", json={"token": sent[-1][1]}).status_code == 400
+assert users.get_user_by_email("late@acme-consulting.com") is not None
+# a team owner with a live subscription is refused before any email goes out
+n = len(sent)
+own2 = sso_login("owner@acme-consulting.com", "sid-owner-2")
+assert client.post("/me/delete-account/email-link", headers=bearer(own2["token"])).status_code == 400
+assert len(sent) == n
+print("ok 14 delete by emailed link: needs the link, single use, expires, refused while subscribed")
+
+# ---- 7. the suite's administrator deletes the person ----
+body = {"suite_user_id": "suite-late@acme-consulting.com", "email": "late@acme-consulting.com"}
+assert client.post("/sso/delete-account", json=body).status_code == 403
+assert client.post("/sso/delete-account", json=body, headers=SECRET).json() == {"deleted": True}
+assert users.get_user_by_email("late@acme-consulting.com") is None and me(late["token"]).status_code == 401
+assert client.post("/sso/delete-account", json=body, headers=SECRET).json() == {"deleted": False}
+print("ok 15 deleted on the suite's request; needs the shared secret")
+
+assert set(client.get("/version").json()) == {"build", "retention_last_run", "retention_counts"}
+print("ok 16 /version reports the retention job")
+
 print("\nALL PASSED")

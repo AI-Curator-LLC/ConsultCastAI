@@ -254,6 +254,11 @@ def create_invite(team_id: str, email: str, token: str) -> None:
     )
 
 
+def delete_invites_for_email(email: str) -> None:
+    """Account deletion: invitations sent to this address go with it."""
+    _run("DELETE FROM team_invites WHERE email = ?", (email,))
+
+
 def get_invite_by_token(token: str) -> TeamInvite | None:
     if not token:
         return None
