@@ -926,26 +926,46 @@ def invite_teammate(req: InviteRequest, background_tasks: BackgroundTasks, user:
 
 @app.get("/team/mine")
 def get_my_team(user: auth.AuthUser = Depends(auth.verify_user)):
-    """Owner-only, matching the spec's Team management view being owner-only
-    end to end — a regular member gets nothing to look at here either."""
+    """Backs the Team screen, for everyone on the team.
+
+    `minutes` is the team's shared practice minutes (minutes.paid_status:
+    used and left this month, extra minutes, when the month's minutes
+    reset, and whether this person may buy more, which only the owner
+    may). None while the paid cap is switched off, for an admin, or if the
+    team's subscription isn't active: nothing is limited then, so there is
+    nothing to show.
+
+    The owner gets every member with the minutes each has used this month
+    (the ledger keeps a figure per person as well as the team's own, see
+    minutes.settle). Anyone else gets only their own row: colleagues'
+    addresses and figures are the owner's to see. Managing the team
+    (inviting) stays owner-only, see invite_teammate."""
     account = users.get_user_by_id(user.rep_id)
     if not account or not account.team_id:
         raise HTTPException(403, "Not on a team")
     team = teams.get_team(account.team_id)
-    if not team or team.owner_user_id != user.rep_id:
-        raise HTTPException(403, "Only the team owner can view this")
+    if not team:
+        raise HTTPException(403, "Not on a team")
+    is_owner = team.owner_user_id == account.id
 
-    month_key = datetime.now(timezone.utc).strftime("%Y-%m")
-    usage = store.get_team_usage(team.id, month_key)
+    status = minutes.paid_status(account)
+    month_key = minutes.month_key()
     members = users.list_team_members(team.id)
+    shown = members if is_owner else [m for m in members if m.id == account.id]
     return {
+        "is_owner": is_owner,
         "seat_limit": team.seat_limit,
         "seats_used": len(members),
         "subscription_status": team.subscription_status,
         "current_period_end": team.current_period_end,
-        "usage_this_month": usage.session_count,
-        "monthly_cap": auth.TEAM_MONTHLY_SESSION_CAP,
-        "members": [{"email": m.email, "created_at": m.created_at, "is_owner": m.id == team.owner_user_id} for m in members],
+        "minutes": status,
+        "members": [{
+            "email": m.email, "created_at": m.created_at, "is_owner": m.id == team.owner_user_id,
+            "is_you": m.id == account.id,
+            # This month's practice time for this one person, or None when
+            # minutes aren't being shown at all.
+            "used_sec": store.get_usage(m.id, month_key).seconds_used if status else None,
+        } for m in shown],
     }
 
 
@@ -1109,12 +1129,10 @@ def start_session(req: StartSessionRequest, user: auth.AuthUser = Depends(auth.r
     minutes.begin(session, now)
     store.save(session)
     _coaching_state[session.id] = coaching.CoachingState()
-    # Charged the instant a session actually exists, not speculatively before
-    # (a request that 404s/500s above never touched this) — see
-    # auth.require_active_plan for the cap this counts against. Incremented
-    # under the team's own key for a team member, not their personal one —
-    # has to match exactly what require_active_plan checked against, or the
-    # pooled cap silently stops being pooled.
+    # A count of sessions started this month, kept for the record only:
+    # nothing is refused because of it (practice minutes are the limit, see
+    # auth.require_active_plan). Counted the instant a session actually
+    # exists, under the team's own key for a team member.
     if not auth.is_dev_bypass() and not user.is_admin:
         month_key = minutes.month_key(now)
         if account and account.team_id:
@@ -1335,7 +1353,7 @@ def delete_my_sessions(user: auth.AuthUser = Depends(auth.verify_user)):
     """Deletes every one of the caller's own sessions. Never touches
     usage_records (see store.increment_session_count's docstring) — this is
     plain session deletion, not account deletion, and must not let anyone
-    claw back part of their monthly cap by deleting sessions."""
+    claw back part of their monthly minutes by deleting sessions."""
     count = store.delete_for_rep(user.rep_id)
     return {"message": f"Deleted {count} session(s)"}
 

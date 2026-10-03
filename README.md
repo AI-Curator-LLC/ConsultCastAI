@@ -214,10 +214,12 @@ Not built yet: account-level lockout and CAPTCHA/bot-detection (see above).
 ## Billing (Stripe subscriptions)
 
 Real recurring billing, not a fixed-term one-time charge: ConsultCastAI Pro
-is $129/month or $1,316/year (one account, 20 sessions/month), MRR/ARR are
-real numbers. Team is $599/month or $6,110/year: up to 5 accounts sharing
-one subscription and one pooled 100-session/month cap, with one owner who
-invites the rest — see `teams.py`.
+is $129/month or $1,316/year (one account, 120 practice minutes a month),
+MRR/ARR are real numbers. Team is $599/month or $6,110/year: up to 5
+accounts sharing one subscription and one pool of 1,000 practice minutes a
+month, with one owner who invites the rest — see `teams.py`. Minutes are
+the only limit on a paid plan (see "Paid minutes and top-ups" below); there
+is no limit on the number of sessions.
 
 Flow: `POST /billing/create-checkout-session` (any signed-in account, even
 an unverified one — subscribing approves an account too, alongside
@@ -232,8 +234,8 @@ already-paid-for period actually ends, not immediately), and
 `invoice.payment_failed` (`past_due`; Stripe's own smart retries handle
 dunning, no custom retry code here). `auth.require_active_plan` (stacked on
 `require_approved`) checks `subscription_status == "active"` and
-`current_period_end` plus a 20-session/month cap on `POST /sessions`
-specifically — the one action that costs money per use; continuing an
+`current_period_end`, and that the plan has practice minutes left, on
+`POST /sessions` specifically — the one action that costs money per use; continuing an
 already-started session doesn't check this again. Admins bypass entirely,
 same convention as `require_owner`'s admin bypass elsewhere in `auth.py` —
 otherwise the account that bootstrapped the approval system would itself
@@ -260,7 +262,7 @@ each product's two Prices, already created in Stripe).
 ### Team tier
 
 A `team` (its own table, `teams.py`) groups up to `seat_limit` (5) user
-accounts under one subscription and one pooled monthly cap — the owner's
+accounts under one subscription and one shared pool of monthly minutes — the owner's
 own account counts as one seat, not tracked separately. `checkout.session.completed`
 branches on the plan prefix (`plan.split("_")[0]`): `"team"` creates the
 `teams` row and sets the owner's `users.team_id`, same as `"pro"` sets the
@@ -271,8 +273,8 @@ customer and subscription live on the `teams` row, never on any member's
 own `users` row.
 
 `auth.require_active_plan` branches on `account.team_id`: set means check
-the team's `subscription_status`/`current_period_end` and pool usage under
-`store.get_team_usage(team_id, ...)` instead of the member's own id (same
+the team's `subscription_status`/`current_period_end`, and the team's
+minutes (kept under the team's id rather than the member's own: same
 storage shape as individual usage, pooling is just using the team's id as
 the key) — a member has no subscription of their own at all, they ride
 entirely on the team's.
@@ -285,8 +287,12 @@ Checkout or pays individually, they join already-approved. Two checks
 beyond the original spec, closing real gaps found while building this: an
 invite can't be redeemed twice (`teams.TeamInvite.used`), and seat capacity
 is re-checked at acceptance, not just at invite time (several invites can
-be outstanding at once). `GET /team/mine` (also owner-only) backs the
-Profile menu's "Team" screen — members, pooled usage, an invite form.
+be outstanding at once). `GET /team/mine` backs the Profile menu's "Team"
+screen for everyone on the team: the team's practice minutes (used and left
+this month, extra minutes, when the month's minutes reset). The owner also
+gets every member with the minutes each has used this month, an "Add 100
+minutes for $40" button and the invite form; a member gets the same team
+figures and only their own row.
 
 `POST /billing/portal-session` is team-aware too: an owner's Stripe
 customer lives on the `teams` row, not their own `users` row, so they
@@ -363,7 +369,7 @@ it):
 - `DELETE /me/sessions` — deletes every one of the caller's own sessions.
   Never touches `usage_records` — that's account deletion's job below, not
   plain session deletion, which must not let anyone claw back part of
-  their monthly cap by deleting sessions.
+  their monthly minutes by deleting sessions.
 - `GET /me/export` — profile fields, plan status, and every one of the
   caller's sessions (metadata, debrief, and the transcript unless already
   purged), filtered by `rep_id` the same way `/sessions/mine` is.
@@ -534,8 +540,11 @@ normal debrief. `/turn` refuses with a 402 `minutes_session_limit` past
 the limit plus `TRIAL_TURN_GRACE_SECONDS`, and also when a team's pool has
 been used up by a colleague's session in the meantime. Time past the limit
 is never charged. With under a minute left `auth.require_active_plan`
-refuses a new session with a 402 `minutes_exhausted`. The monthly session
-counts (20 for Pro, 100 pooled for Team) are unchanged and still apply.
+refuses a new session with a 402 `minutes_exhausted`. Minutes are the
+only limit on a paid plan: the old monthly session caps (20 for Pro, 100
+pooled for Team) are gone. The number of sessions started in a month is
+still recorded (`session_count`) but nothing is refused because of it, and
+with `PAID_MINUTES_ENFORCED` off a paid plan is not limited at all.
 
 **Frontend.** `/auth/me`, `/sessions`, `/end`, `/pause` and `/resume`
 carry `paid_minutes` next to `trial` (`minutes.paid_status`). The header
@@ -544,7 +553,8 @@ minutes left this month" on a team), with "+ 100 extra" when there is a
 balance. When the minutes are used, a panel says so, says when they reset
 (the first day of next month, UTC) and offers "Add 100 minutes for $40" to
 a Pro account or a team owner; the account menu has "Add minutes" for the
-same people. Coming back from Stripe (`?payment=topup_success`) the page
+same people. The Team screen (account menu, "Team") shows the same
+figures for the team, with the button for the owner. Coming back from Stripe (`?payment=topup_success`) the page
 re-reads `/auth/me` until the new balance shows. A live avatar session on a
 paid plan keeps its 30-minute limit: whichever limit comes first applies.
 

@@ -1,7 +1,8 @@
 """Paid practice minutes (minutes.py, topups.py, the /billing/topup-checkout-session
 route and the webhook in main.py, auth.require_active_plan): Pro's and Team's
 monthly minutes, extra minutes bought as a one-time payment, the on/off
-switch, and proof that the trial is unchanged.
+switch, proof that the trial is unchanged, that the number of sessions in a
+month limits nothing, and the Team screen's figures (GET /team/mine).
 
 Run:  python tests/test_minutes.py
 
@@ -192,6 +193,17 @@ def month_used(owner_id):
     return store.get_usage(owner_id, minutes.month_key()).seconds_used
 
 
+def sessions_counted(owner_id):
+    return store.get_usage(owner_id, minutes.month_key()).session_count
+
+
+def team_screen(token):
+    """What the Team screen is drawn from."""
+    r = client.get("/team/mine", headers=bearer(token))
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
 # ---- 1. the trial is exactly as it was ----
 trial_user, trial = make("trial@example.com")
 info = me(trial)
@@ -263,6 +275,21 @@ store.add_seconds(low_user.id, minutes.month_key(), 7200 - 45)
 assert me(low)["paid_minutes"]["exhausted"] is True and start(low).status_code == 402
 print("ok 2b under a minute left: a new session cannot be started")
 
+# the number of sessions in a month limits nothing (there used to be a cap of 20)
+many_user, many = make("many@example.com")
+subscribe(many_user, "sub_many")
+for _ in range(25):
+    assert practice(many, MIN)["paid_minutes"]["exhausted"] is False
+assert sessions_counted(many_user.id) == 25                       # still recorded
+r = start(many)
+assert r.status_code == 200 and r.json()["time_limit_sec"] == 95 * MIN, r.text    # only minutes count
+end(many, r.json()["id"])
+for _ in range(200):                                              # however high the count goes
+    store.increment_session_count(many_user.id, minutes.month_key())
+assert sessions_counted(many_user.id) == 226 and start(many).status_code == 200
+assert not hasattr(main.auth, "PRO_MONTHLY_SESSION_CAP") and not hasattr(main.auth, "TEAM_MONTHLY_SESSION_CAP")
+print("ok 2c Pro: 25 sessions in a month (and a count of 226) are not refused; only minutes are a limit")
+
 # ---- 3. a new month restores the allowance ----
 next_month()
 paid = me(pro)["paid_minutes"]
@@ -287,6 +314,32 @@ practice(ann, 600 * MIN)
 assert month_used("team-1") == 600 * MIN and month_used(ann_user.id) == 600 * MIN
 for token in (owner, ann, bob):                    # everyone sees the same pool
     assert me(token)["paid_minutes"]["remaining_sec"] == 400 * MIN
+
+# the Team screen reports the team's minutes, not sessions
+screen = team_screen(owner)
+assert "usage_this_month" not in screen and "monthly_cap" not in screen
+assert screen["is_owner"] is True and screen["seats_used"] == 3 and screen["seat_limit"] == 5
+shared = screen["minutes"]
+assert shared["plan"] == "team" and shared["included_sec"] == 60000 and shared["used_sec"] == 600 * MIN
+assert shared["included_remaining_sec"] == 400 * MIN and shared["topup_sec"] == 0 and shared["can_buy"] is False
+assert shared["resets_on"] == me(owner)["paid_minutes"]["resets_on"]
+by_email = {m["email"]: m for m in screen["members"]}
+assert set(by_email) == {"owner@acme-consulting.com", "ann@acme-consulting.com", "bob@acme-consulting.com"}
+assert by_email["ann@acme-consulting.com"]["used_sec"] == 600 * MIN                # each person's own minutes this month
+assert by_email["bob@acme-consulting.com"]["used_sec"] == 0 and by_email["owner@acme-consulting.com"]["used_sec"] == 0
+assert by_email["owner@acme-consulting.com"]["is_owner"] is True and by_email["owner@acme-consulting.com"]["is_you"] is True
+screen = team_screen(bob)                          # a member: the same team figures, and only their own row
+assert screen["is_owner"] is False and screen["minutes"]["used_sec"] == 600 * MIN
+assert screen["minutes"]["included_remaining_sec"] == 400 * MIN and screen["minutes"]["can_buy"] is False
+assert [m["email"] for m in screen["members"]] == ["bob@acme-consulting.com"] and screen["members"][0]["used_sec"] == 0
+assert client.get("/team/mine", headers=bearer(pro)).status_code == 403            # not on a team
+assert client.get("/team/mine").status_code == 401
+print("ok 3b Team screen: minutes used and left for the team, per person for the owner; a member sees the team's figures")
+
+# the number of sessions limits nothing for a team either (there used to be a pooled cap of 100)
+for _ in range(150):
+    store.increment_team_session_count("team-1", minutes.month_key())
+assert sessions_counted("team-1") >= 150
 r = start(bob)
 assert r.json()["time_limit_sec"] == 400 * MIN
 bob_sid = r.json()["id"]
@@ -357,6 +410,9 @@ webhook("checkout.session.async_payment_succeeded", event)         # a second ev
 assert topups.balance_seconds("team-1") == 6000
 for token in (owner, ann, bob):                                    # credited to the team, seen by all of it
     assert me(token)["paid_minutes"]["topup_sec"] == 6000
+    assert team_screen(token)["minutes"]["topup_sec"] == 6000      # and on the Team screen
+assert team_screen(owner)["minutes"]["can_buy"] is True            # the button is the owner's only
+assert team_screen(ann)["minutes"]["can_buy"] is False and team_screen(ann)["minutes"]["topup_available"] is True
 assert topups.balance_seconds(owner_user.id) == 0
 # an unpaid checkout credits nothing until the payment itself is confirmed
 webhook("checkout.session.completed", paid_checkout(pro_checkout, "cs_pro_1", payment_status="unpaid"))
@@ -430,6 +486,14 @@ advance(300 * MIN)
 assert turn(low, sid).status_code == 200
 assert end(low, sid)["paid_minutes"] is None
 assert month_used(low_user.id) == 7200 + 300 * MIN                 # still recorded
+for _ in range(30):                                                # off: nothing limits a paid plan, sessions included
+    store.increment_session_count(low_user.id, minutes.month_key())
+r = start(low)
+assert r.status_code == 200 and r.json()["time_limit_sec"] is None
+end(low, r.json()["id"])
+screen = team_screen(owner)                                        # the Team screen shows no minutes while it is off
+assert screen["minutes"] is None and all(m["used_sec"] is None for m in screen["members"]) and len(screen["members"]) == 3
+assert start(ann).status_code == 200
 practice(pro, 20 * MIN)
 assert store.get_topup_used(pro_user.id) == before_topup           # bought minutes are not touched while it is off
 assert client.post("/billing/topup-checkout-session", headers=bearer(pro)).status_code == 400

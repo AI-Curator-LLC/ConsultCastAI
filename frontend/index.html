@@ -1124,23 +1124,40 @@
   </div>
 </section>
 
-<!-- TEAM (owner only) -->
+<!-- TEAM: everyone on a team sees the team's practice minutes here; the
+     owner also sees every member, can add minutes and can invite (see
+     loadTeamScreen, which hides the owner-only parts for a member). -->
 <section id="teamScreen" class="hidden" style="margin-top:20px;">
   <div class="panel">
     <p class="eyebrow">Team</p>
-    <h2>Manage your team</h2>
+    <h2 id="teamTitle">Your team</h2>
     <p class="auth-note" id="teamSummary">Loading…</p>
     <!-- Canceling is standard Stripe Customer Portal behavior (Manage
          subscription), not a separate control here — this is just making
          sure an owner understands the blast radius before they use it. -->
-    <p class="auth-note" style="color:var(--warn);">Canceling the subscription (via Manage subscription) ends access for every invited member, not just you — they were never paying individually, they're riding on this one subscription.</p>
+    <p class="auth-note hidden" id="teamCancelNote" style="color:var(--warn);">Canceling the subscription (via Manage subscription) ends access for every invited member, not just you. They were never paying individually, they're riding on this one subscription.</p>
 
-    <div class="side-section">
-      <div class="side-label">Members</div>
-      <div id="teamMembersList"><p class="history-empty">Loading…</p></div>
+    <!-- The team's shared practice minutes (the "minutes" part of
+         /team/mine). Hidden while the paid cap is switched off. -->
+    <div class="side-section hidden" id="teamMinutesSection">
+      <div class="side-label">Practice minutes</div>
+      <p class="auth-note" id="teamMinutesUsed" style="margin:0 0 6px; font-size:14px; color:var(--text);"></p>
+      <p class="auth-note hidden" id="teamMinutesExtra" style="margin:0 0 6px;"></p>
+      <p class="auth-note" id="teamMinutesReset" style="margin:0;"></p>
+      <p class="auth-error hidden" id="teamMinutesError" style="margin:10px 0 0;"></p>
+      <div class="hidden" id="teamMinutesActions" style="margin-top:12px;">
+        <button class="btn" id="teamMinutesBuyBtn" onclick="startTopupCheckout('teamMinutesBuyBtn', 'teamMinutesError')">Add minutes</button>
+        <p class="auth-note" style="margin:10px 0 0; font-size:11.5px; color:var(--text-faint); line-height:1.5;">A one-time payment, not a subscription. Extra minutes are used only after the month's minutes run out, they do not expire at the end of the month, and they can be used while the subscription is active.</p>
+      </div>
+      <p class="auth-note hidden" id="teamMinutesAsk" style="margin:10px 0 0;">Ask your team owner to add minutes.</p>
     </div>
 
     <div class="side-section">
+      <div class="side-label" id="teamMembersLabel">Members</div>
+      <div id="teamMembersList"><p class="history-empty">Loading…</p></div>
+    </div>
+
+    <div class="side-section hidden" id="teamInviteSection">
       <div class="side-label">Invite a teammate</div>
       <div class="composer">
         <input class="text-input" id="teamInviteEmail" type="email" placeholder="teammate@company.com" />
@@ -1556,9 +1573,9 @@ window.closeMinutesCard = function(){
 // added here: the server adds the minutes when Stripe confirms the payment,
 // and the page picks that up on the way back (see afterTopupReturn).
 const TOPUP_BEFORE_KEY = 'consultcastai_topup_before';
-window.startTopupCheckout = async function(){
-  const btn = document.getElementById('minutesCardBuyBtn');
-  const errEl = document.getElementById('minutesCardError');
+window.startTopupCheckout = async function(btnId, errId){ // the Team screen passes its own button and error line
+  const btn = document.getElementById(btnId || 'minutesCardBuyBtn');
+  const errEl = document.getElementById(errId || 'minutesCardError');
   errEl.classList.add('hidden');
   btn.disabled = true;
   try{
@@ -2615,7 +2632,7 @@ async function loadAccounts(){
   });
 }
 
-// --- Team management (owner only) ---------------------------------------
+// --- Team screen: the team's minutes for everyone, managing it for the owner ---
 window.openTeamScreen = function(){
   closeProfileMenu();
   document.getElementById('teamInviteError').classList.add('hidden');
@@ -2633,18 +2650,47 @@ window.closeTeamScreen = function(){
 async function loadTeamScreen(){
   const summary = document.getElementById('teamSummary');
   const list = document.getElementById('teamMembersList');
+  const minutesSection = document.getElementById('teamMinutesSection');
   summary.textContent = 'Loading…';
   list.innerHTML = '<p class="history-empty">Loading…</p>';
+  minutesSection.classList.add('hidden');
+  document.getElementById('teamMinutesError').classList.add('hidden');
+  document.getElementById('teamMinutesBuyBtn').disabled = false;
   let team;
   try{
     team = await api('/team/mine');
   }catch(e){
-    summary.textContent = 'Could not load your team: ' + e.message;
+    summary.textContent = 'Could not load your team: ' + errorDetail(e).message;
     list.innerHTML = '';
     return;
   }
-  summary.textContent = `${team.seats_used} / ${team.seat_limit} seats used · ${team.usage_this_month} / ${team.monthly_cap} pooled sessions this month`;
+  // Owner-only parts: managing the team. A member sees the figures only.
+  document.getElementById('teamTitle').textContent = team.is_owner ? 'Manage your team' : 'Your team';
+  document.getElementById('teamCancelNote').classList.toggle('hidden', !team.is_owner);
+  document.getElementById('teamInviteSection').classList.toggle('hidden', !team.is_owner);
+  document.getElementById('teamMembersLabel').textContent = team.is_owner ? 'Members' : 'You';
+  summary.textContent = `${team.seats_used} / ${team.seat_limit} seats used`;
   document.getElementById('teamInviteBtn').disabled = team.seats_used >= team.seat_limit;
+
+  // The team's practice minutes: one amount a month for the whole team.
+  // Absent (and the section stays hidden) while minutes are not limited.
+  const mins = team.minutes;
+  if(mins){
+    const total = Math.floor(mins.included_sec / 60);
+    const left = Math.floor(mins.included_remaining_sec / 60); // rounded down, like the counter at the top
+    const extraMin = Math.floor(mins.topup_sec / 60);
+    const n = v => v.toLocaleString('en-US');
+    document.getElementById('teamMinutesUsed').textContent =
+      `${n(total - left)} of ${n(total)} minutes used this month, ${n(left)} left. Shared by the whole team.`;
+    const extraEl = document.getElementById('teamMinutesExtra');
+    extraEl.textContent = `Extra minutes: ${n(extraMin)}. They are used after the month's minutes and do not expire.`;
+    extraEl.classList.toggle('hidden', extraMin <= 0);
+    document.getElementById('teamMinutesReset').textContent = `The month's minutes reset on ${resetDayText(mins.resets_on)}.`;
+    document.getElementById('teamMinutesBuyBtn').textContent = `Add ${mins.topup_block_min} minutes for ${mins.topup_price_label}`;
+    document.getElementById('teamMinutesActions').classList.toggle('hidden', !mins.can_buy);
+    document.getElementById('teamMinutesAsk').classList.toggle('hidden', !(mins.is_team_member && mins.topup_available));
+    minutesSection.classList.remove('hidden');
+  }
 
   list.innerHTML = '';
   team.members.forEach(m => {
@@ -2657,10 +2703,19 @@ async function loadTeamScreen(){
     const main = document.createElement('div');
     main.className = 'history-main';
     main.textContent = m.email + (m.is_owner ? ' (owner)' : '');
+    main.style.overflowWrap = 'anywhere';
+    summaryRow.style.flexWrap = 'wrap'; // on a narrow screen the figure goes under the address
 
+    // This person's own practice time this month, when minutes are shown;
+    // otherwise the day they joined, as before.
     const meta = document.createElement('div');
     meta.className = 'history-meta';
-    meta.textContent = m.created_at ? new Date(m.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '';
+    if(typeof m.used_sec === 'number'){
+      const usedMin = Math.round(m.used_sec / 60);
+      meta.textContent = `${usedMin.toLocaleString('en-US')} minute${usedMin === 1 ? '' : 's'} used this month`;
+    }else{
+      meta.textContent = m.created_at ? new Date(m.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '';
+    }
 
     summaryRow.append(main, meta);
     row.appendChild(summaryRow);
@@ -2805,7 +2860,7 @@ function onAuthenticated(me){
   }
   planNote.classList.toggle('hidden', !me.plan_minutes);
   document.getElementById('accountsMenuBtn').classList.toggle('hidden', !me.is_admin);
-  document.getElementById('teamMenuBtn').classList.toggle('hidden', !me.is_team_owner);
+  document.getElementById('teamMenuBtn').classList.toggle('hidden', !me.team_id); // everyone on a team: its minutes; the owner also manages it there
   // A regular (non-owner) team member never paid anything and has no
   // billing role — the portal endpoint itself 403s them, so don't even
   // show a button that dead-ends.

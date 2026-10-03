@@ -145,12 +145,6 @@ def require_admin(user: AuthUser = Depends(verify_user)) -> AuthUser:
     return user
 
 
-# Monthly session caps. Team's is pooled across every member (see
-# store.get_team_usage), not per-seat — a 5-seat team still shares one 100.
-PRO_MONTHLY_SESSION_CAP = 20
-TEAM_MONTHLY_SESSION_CAP = 100
-
-
 def _require_verified_for_first_session(account: users.User) -> None:
     """Email has to be verified before an account's first session. Checked
     against whether it has any session yet rather than applied flatly, so an
@@ -192,7 +186,9 @@ def require_active_plan(user: AuthUser = Depends(require_approved)) -> AuthUser:
 
     A paid account also needs minutes left: this month's, or extra minutes
     it has bought (minutes.paid_status; switched off, that check is
-    skipped)."""
+    skipped and a paid plan is not limited at all). Minutes are the only
+    limit: the number of sessions started in a month is still recorded
+    (main.start_session) but nothing is refused because of it."""
     if _dev_bypass_enabled() or user.is_admin:
         return user
     account = users.get_user_by_id(user.rep_id)
@@ -201,16 +197,12 @@ def require_active_plan(user: AuthUser = Depends(require_approved)) -> AuthUser:
 
     _require_verified_for_first_session(account)
 
-    month_key = minutes.month_key()
     if account.team_id:
         team = teams.get_team(account.team_id)
         if not team or not teams.team_subscription_active(team):
             raise HTTPException(status_code=402, detail="Your team's subscription isn't active. Contact your team owner.")
-        usage = store.get_team_usage(team.id, month_key)
-        cap = TEAM_MONTHLY_SESSION_CAP
     elif users.subscription_active(account) or minutes.suite_pro(account):
-        usage = store.get_usage(user.rep_id, month_key)
-        cap = PRO_MONTHLY_SESSION_CAP
+        pass  # Pro, by its own subscription or through the suite's plan
     elif minutes.is_trial(account):
         status = minutes.trial_status(account)
         if status["exhausted"]:
@@ -220,16 +212,13 @@ def require_active_plan(user: AuthUser = Depends(require_approved)) -> AuthUser:
                 f"You've used your {minutes.TRIAL_TOTAL_SEC // 60} trial minutes. Upgrade to Pro to keep practicing."
             )
             raise HTTPException(status_code=402, detail={"code": "trial_exhausted", "message": message})
-        return user  # the trial is capped on minutes, not on a monthly session count
+        return user  # the trial has its own minutes, checked just above
     else:
         raise HTTPException(status_code=402, detail="Your subscription isn't active. Please subscribe or update your billing.")
 
     paid = minutes.paid_status(account)
     if paid and paid["exhausted"]:
         raise HTTPException(status_code=402, detail={"code": "minutes_exhausted", "message": minutes_exhausted_message(paid)})
-
-    if usage.session_count >= cap:
-        raise HTTPException(status_code=402, detail=f"You've used your {cap} sessions this month. Resets next month.")
     return user
 
 

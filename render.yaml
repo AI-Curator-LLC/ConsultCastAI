@@ -94,7 +94,7 @@ services:
         value: /data/sessions_local.json
       # Was defaulting to a relative path (usage_local.json) in the app's own
       # working directory, not the persistent disk — every deploy/restart
-      # silently reset everyone's monthly session count. Caught while adding
+      # silently reset everyone's monthly usage record. Caught while adding
       # the retention job below, which also reads/writes this file.
       - key: CONSULTCASTAI_USAGE_STORE_PATH
         value: /data/usage_local.json

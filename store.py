@@ -238,9 +238,11 @@ def list_all_raw() -> dict[str, dict]:
 # --- usage metering (billing enforcement, see auth.require_active_plan) ---
 # Same local-file-or-Firestore split as sessions above, and the same
 # "fine for solo-founder scale, not a real concurrency guarantee" caveat
-# from this module's docstring — a lost increment under a genuine race
-# would very rarely let one paying rep sneak an extra session past the
-# monthly cap, not a security issue, just not bank-grade accounting.
+# from this module's docstring — a lost write under a genuine race would
+# very rarely undercount a little usage, not a security issue, just not
+# bank-grade accounting. The limit on a plan is its minutes (seconds_used,
+# see minutes.py); session_count is a record only, nothing is refused
+# because of it.
 
 def _usage_key(user_id: str, month: str) -> str:
     return f"{user_id}:{month}"
@@ -251,8 +253,8 @@ def delete_usage_records_for_rep(user_id: str) -> int:
     account deletion (main.py's /me/delete-account) — never from plain
     session deletion, which must NOT touch usage_records (see
     increment_session_count's docstring: deleting sessions must not let
-    someone claw back part of their monthly cap). The account itself is
-    gone by the time this runs, so there's no cap left to protect."""
+    someone claw back part of their monthly minutes). The account itself is
+    gone by the time this runs, so there's nothing left to protect."""
     prefix = f"{user_id}:"
     if _LOCAL:
         with _USAGE_LOCAL_LOCK:
@@ -285,8 +287,8 @@ def get_usage(user_id: str, month: str) -> UsageRecord:
 
 def increment_session_count(user_id: str, month: str) -> None:
     """Called once, right after a session is successfully created (see
-    main.py's start_session) — never speculatively, so a request that fails
-    before that point doesn't cost the rep part of their monthly cap."""
+    main.py's start_session) — never speculatively. A record of how many
+    sessions were started in the month, not a limit."""
     key = _usage_key(user_id, month)
     if _LOCAL:
         with _USAGE_LOCAL_LOCK:
@@ -304,8 +306,8 @@ def increment_session_count(user_id: str, month: str) -> None:
 
 # Team usage is the exact same storage shape as individual usage — pooling
 # is achieved simply by keying the record on the team's id instead of a
-# member's own id, so every member's sessions land in one shared counter
-# rather than each seat getting its own separate cap.
+# member's own id, so every member's use lands in one shared record
+# rather than each seat getting its own.
 def get_team_usage(team_id: str, month: str) -> UsageRecord:
     return get_usage(team_id, month)
 

@@ -1,6 +1,6 @@
 """
-Team-tier subscriptions: one Stripe subscription and one pooled monthly
-usage cap shared across up to `seat_limit` member accounts (see
+Team-tier subscriptions: one Stripe subscription and one pool of monthly
+practice minutes shared across up to `seat_limit` member accounts (see
 users.team_id), with one owner who invites the others.
 
 Same physical database as users.py (same CONSULTCASTAI_LOCAL_USERS /
