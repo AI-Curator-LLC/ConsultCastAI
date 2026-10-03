@@ -38,15 +38,11 @@ services:
         sync: false
       - key: CONSULTCASTAI_ALLOWED_ORIGINS  # comma-separated, exact origins, no trailing slash. Must list EVERY address the frontend is served from (the onrender.com URL and the custom domain), or the browser blocks its API calls
         sync: false
-      # CRITICAL, read before deploying: the access-approval system (users.py)
-      # gates every functional endpoint on an "approved" flag that defaults
-      # to false, including on accounts that already existed before this
-      # shipped. Set this to YOUR OWN login email on the very first deploy
-      # after this ships, or you lock yourself out of your own account —
-      # same class of mistake as the missing CONSULTCASTAI_JWT_SECRET
-      # incident. This account gets promoted to admin+approved automatically
-      # (works whether it already exists or signs up fresh), and it's also
-      # where "someone signed up" notification emails go.
+      # Set this to YOUR OWN login email. That account is promoted to
+      # admin+approved automatically (whether it already exists or signs up
+      # fresh). Without an admin there's no accounts view and nobody who can
+      # suspend an account. It's also where "someone signed up" notification
+      # emails go. (Approval itself is automatic now, on email verification.)
       - key: CONSULTCASTAI_ADMIN_EMAIL
         sync: false
       # Stripe: real recurring subscriptions — Pro ($129/mo or $1,316/yr, one
@@ -116,6 +112,10 @@ services:
         value: "10"
       - key: TRIAL_WARNING_SECONDS
         value: "60"
+      # Accounts one IP can create per rolling 24 hours (see README's signup
+      # guards). Team-invite signups are exempt.
+      - key: SIGNUPS_PER_IP_PER_DAY
+        value: "3"
       # Where the emailed verification link points, and where it lands afterward.
       - key: CONSULTCASTAI_BACKEND_URL
         value: https://consultcastai-api.onrender.com

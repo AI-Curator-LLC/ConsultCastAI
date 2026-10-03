@@ -71,6 +71,11 @@
   .trial-upgrade{margin:0 0 16px; border-color:rgba(155,92,255,0.45);}
   .trial-upgrade h2{margin-bottom:6px;}
   .trial-upgrade .upgrade-actions{display:flex; gap:10px; flex-wrap:wrap; margin:12px 0 10px;}
+  .account-chip{display:inline-block; font-family:var(--font-mono); font-size:10px; letter-spacing:0.5px; padding:2px 7px;
+    border-radius:99px; border:1px solid var(--border); color:var(--text-dim); margin-left:8px; vertical-align:middle;}
+  .account-chip.good{color:var(--good); border-color:rgba(51,230,165,0.35);}
+  .account-chip.warn{color:var(--warn); border-color:rgba(255,184,77,0.4);}
+  .account-chip.danger{color:#ff8ea1; border-color:rgba(255,79,109,0.45);}
   .trial-upgrade .fine-print{font-size:11.5px; color:var(--text-faint); line-height:1.5; margin:0;}
   .timer-pill{padding:7px 14px; border-radius:10px; font-family:var(--font-display); font-size:15px; font-weight:600;
     background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.12);}
@@ -620,9 +625,9 @@
           <div class="who" id="profileEmail"></div>
           <button role="menuitem" onclick="openProfile()">Profile</button>
           <button role="menuitem" onclick="openDebriefHistory()">Debrief History</button>
-          <button role="menuitem" id="manageSubBtn" onclick="openBillingPortal()">Manage subscription</button>
+          <button role="menuitem" id="manageSubBtn" onclick="openPlanMenu()">Manage subscription</button>
           <button role="menuitem" class="hidden" id="teamMenuBtn" onclick="openTeamScreen()">Team</button>
-          <button role="menuitem" class="hidden" id="pendingRequestsMenuBtn" onclick="openPendingRequests()">Pending Requests</button>
+          <button role="menuitem" class="hidden" id="accountsMenuBtn" onclick="openAccounts()">Accounts</button>
           <div class="profile-menu-divider" role="separator"></div>
           <a id="userGuideMenuLink" role="menuitem" target="_blank" rel="noopener noreferrer" href="#">User Guide<span class="sr-only"> (opens in a new tab)</span></a>
           <a id="userAgreementMenuLink" role="menuitem" target="_blank" rel="noopener noreferrer" href="#">User Agreement<span class="sr-only"> (opens in a new tab)</span></a>
@@ -649,15 +654,24 @@
        where Start is disabled alongside it, without covering a debrief
        that's still on screen from the session that used up the trial. -->
   <div class="panel trial-upgrade hidden" id="trialUpgradeCard">
-    <p class="eyebrow">Trial complete</p>
+    <p class="eyebrow" id="trialUpgradeEyebrow">Trial complete</p>
     <h2 id="trialUpgradeTitle">You've used your trial minutes</h2>
-    <p class="auth-note" style="margin:0;">Upgrade to Pro to keep practicing. Your debrief history stays with your account.</p>
+    <p class="auth-note" id="trialUpgradeNote" style="margin:0;">Upgrade to keep practicing. Your debrief history stays with your account.</p>
     <p class="auth-error checkout-error hidden" style="margin:10px 0 0;"></p>
     <div class="upgrade-actions">
       <button class="btn" data-checkout-btn onclick="startCheckout('pro_monthly')">Upgrade to Pro — $129/month</button>
       <button class="btn ghost" data-checkout-btn onclick="startCheckout('pro_annual')">Pro — $1,316/year</button>
     </div>
-    <p class="fine-print">Billed automatically at the interval selected, renews until canceled. Cancel anytime from Profile → Manage subscription — access continues through the period you've already paid for.</p>
+    <p class="field-label" style="margin:4px 0 0;">Or for a team (5 seats, pooled usage)</p>
+    <div class="upgrade-actions" style="margin-top:8px;">
+      <button class="btn ghost" data-checkout-btn onclick="startCheckout('team_monthly')">Team — $599/month</button>
+      <button class="btn ghost" data-checkout-btn onclick="startCheckout('team_annual')">Team — $6,110/year</button>
+    </div>
+    <!-- FTC "click to cancel" disclosure: substance, not boilerplate — this
+         is real auto-renewing billing, so how it renews and how to stop it
+         has to be stated plainly right next to the buttons that start it. -->
+    <p class="fine-print">Billed automatically at the interval selected, renews until canceled. Cancel anytime from Profile → Manage subscription — access continues through the period you've already paid for. On a Team plan, canceling ends access for every invited member, not just the owner.</p>
+    <button class="btn-sm hidden" id="trialUpgradeCloseBtn" onclick="closeTrialUpgrade()" style="margin-top:12px;">Not now</button>
   </div>
 
   <div class="session-grid">
@@ -1025,49 +1039,60 @@
   </div>
 </div>
 
-<!-- Shown instead of the app for a logged-in account that hasn't been
-     approved yet (see auth.require_approved). Distinct from #authScreen:
-     the account is real and the JWT is valid, it's just not allowed to use
-     anything functional yet. Log out is the only action available here. -->
+<!-- Shown instead of the app for a logged-in account that hasn't verified
+     its email yet. Verifying is what approves an account (there's no
+     manual approval), so this is the one step between signing up and
+     getting in. Distinct from #authScreen: the account is real and the JWT
+     is valid. Keeps the id "pendingScreen" from when this was a wait for
+     an admin. -->
 <div id="pendingScreen" class="auth-screen hidden">
   <div class="panel auth-card">
     <div class="auth-brand">
       <img src="assets/ccai-icon.png" alt="" />
       <span class="brand-text">ConsultCast<span class="ai">AI</span></span>
     </div>
-    <h2>Request pending</h2>
-    <p class="auth-note" id="pendingScreenNote">Your access request is pending approval. You'll be able to use ConsultCastAI as soon as an admin approves your account — no action needed from you in the meantime.</p>
-    <p class="auth-note">Or skip the wait: subscribe and you're in immediately.</p>
-    <p class="auth-error checkout-error hidden" id="checkoutError"></p>
-    <button class="btn block" data-checkout-btn id="checkoutBtnMonthly" style="margin-bottom:10px;" onclick="startCheckout('pro_monthly')">ConsultCastAI Pro — $129/month</button>
-    <button class="btn block" data-checkout-btn id="checkoutBtnAnnual" style="margin-bottom:18px;" onclick="startCheckout('pro_annual')">ConsultCastAI Pro — $1,316/year</button>
-    <p class="field-label" style="margin-bottom:8px;">Or for a team (5 seats, pooled usage)</p>
-    <button class="btn ghost block" data-checkout-btn id="checkoutBtnTeamMonthly" style="margin-bottom:10px;" onclick="startCheckout('team_monthly')">ConsultCastAI Team — $599/month</button>
-    <button class="btn ghost block" data-checkout-btn id="checkoutBtnTeamAnnual" style="margin-bottom:18px;" onclick="startCheckout('team_annual')">ConsultCastAI Team — $6,110/year</button>
-    <!-- FTC "click to cancel" disclosure: substance, not boilerplate — this
-         is real auto-renewing billing, so how it renews and how to stop it
-         has to be stated plainly right next to the buttons that start it. -->
-    <p style="font-size:11.5px; color:var(--text-faint); line-height:1.5; margin:0 0 22px;">
-      Billed automatically at the interval selected, renews until canceled. Cancel anytime from Profile → Manage subscription — access continues through the period you've already paid for. On a Team plan, canceling ends access for every invited member, not just the owner.
-    </p>
-    <!-- Still-pending accounts have no other way to reach Profile (this
-         screen fully covers the app underneath) — a pending user still
-         needs to be able to export or delete their own data (see Data
-         Retention, Deletion, and Export: verify_user-only, no approval
-         gate), so give them a way in rather than requiring approval first. -->
-    <button class="btn ghost block" onclick="openProfileFromPending()">Account settings</button>
+    <h2>Verify your email</h2>
+    <p class="auth-note" id="pendingScreenNote">We sent a verification link to <strong id="pendingEmail">your email</strong>. Click it and you're in: your account is activated as soon as your email is verified.</p>
+    <p class="auth-note">Can't find it? Check your spam folder, or send it again.</p>
+    <p class="auth-error hidden" id="pendingScreenError"></p>
+    <p class="auth-note success hidden" id="pendingScreenSuccess"></p>
+    <button class="btn block" id="pendingResendBtn" style="margin-bottom:10px;" onclick="resendFromPending()">Resend verification email</button>
+    <button class="btn ghost block" id="pendingContinueBtn" style="margin-bottom:18px;" onclick="continueAfterVerifying()">I've verified, continue</button>
+    <!-- This screen fully covers the app underneath, and an unverified user
+         still needs to be able to export or delete their own data (see Data
+         Retention, Deletion, and Export: verify_user-only), so give them a
+         way into Profile from here. -->
+    <button class="btn ghost block" style="margin-bottom:10px;" onclick="openProfileFromOverlay('pendingScreen')">Account settings</button>
     <button class="btn ghost block" onclick="logout()">Log out</button>
   </div>
 </div>
 
-<!-- PENDING REQUESTS (admin only) -->
-<section id="pendingRequestsScreen" class="hidden" style="margin-top:20px;">
+<!-- Shown instead of the app for an account an admin has suspended (see
+     auth.require_approved). Export and delete still work, so Profile stays
+     reachable from here too. -->
+<div id="suspendedScreen" class="auth-screen hidden">
+  <div class="panel auth-card">
+    <div class="auth-brand">
+      <img src="assets/ccai-icon.png" alt="" />
+      <span class="brand-text">ConsultCast<span class="ai">AI</span></span>
+    </div>
+    <h2>Account suspended</h2>
+    <p class="auth-note">This account has been suspended, so practice sessions and history aren't available. If you think this is a mistake, contact support.</p>
+    <p class="auth-note">You can still download your data or delete your account from Account settings.</p>
+    <button class="btn ghost block" style="margin-bottom:10px;" onclick="openProfileFromOverlay('suspendedScreen')">Account settings</button>
+    <button class="btn ghost block" onclick="logout()">Log out</button>
+  </div>
+</div>
+
+<!-- ACCOUNTS (admin only) -->
+<section id="accountsScreen" class="hidden" style="margin-top:20px;">
   <div class="panel">
     <p class="eyebrow">Admin</p>
-    <h2>Pending Requests</h2>
-    <div id="pendingRequestsList"><p class="history-empty">Loading…</p></div>
+    <h2>Accounts</h2>
+    <p class="auth-note">Accounts get access automatically once their email is verified. Suspend one to block it; "Approve manually" is for when a verification email never arrived.</p>
+    <div id="accountsList"><p class="history-empty">Loading…</p></div>
     <div class="end-row">
-      <button class="btn ghost" onclick="closePendingRequests()">Close</button>
+      <button class="btn ghost" onclick="closeAccounts()">Close</button>
     </div>
   </div>
 </section>
@@ -1300,16 +1325,28 @@ function setTrialInfo(info){
   trialInfo = info || null;
   renderTrialPill();
   const out = trialExhausted();
-  // Not shown over a session that's still running: the session ends itself
-  // (with its debrief) and this appears then.
-  document.getElementById('trialUpgradeCard').classList.toggle('hidden', !out || sessionTrialBaseSec !== null);
+  if(!trialInfo) upgradeCardOpen = false; // no longer a trial (subscribed, or logged out)
+  // Shown when the trial is used up, or when a trial user opens it
+  // themselves to upgrade early. Never over a session that's still running:
+  // the session ends itself (with its debrief) and this appears then.
+  const show = !!trialInfo && (out || upgradeCardOpen) && sessionTrialBaseSec === null;
+  document.getElementById('trialUpgradeCard').classList.toggle('hidden', !show);
   document.getElementById('debriefUpgradeBtn').classList.toggle('hidden', !out);
+  document.getElementById('trialUpgradeCloseBtn').classList.toggle('hidden', out); // nothing to go back to once it's used up
+  // A trial account has no subscription to manage yet: the same menu item
+  // is its way to upgrade.
+  document.getElementById('manageSubBtn').textContent = trialInfo ? 'Upgrade plan' : 'Manage subscription';
   if(trialInfo){
+    const totalMin = Math.round(trialInfo.total_sec / 60);
+    document.getElementById('trialUpgradeEyebrow').textContent = out ? 'Trial complete' : 'Upgrade';
     // previously_used: the trial went on an earlier account with this same
     // email (trials are per email), so this one never had minutes to use.
-    document.getElementById('trialUpgradeTitle').textContent = trialInfo.previously_used
-      ? 'This email has already used its free trial'
-      : `You've used your ${Math.round(trialInfo.total_sec / 60)} trial minutes`;
+    document.getElementById('trialUpgradeTitle').textContent = !out ? 'Upgrade your plan'
+      : trialInfo.previously_used ? 'This email has already used its free trial'
+      : `You've used your ${totalMin} trial minutes`;
+    document.getElementById('trialUpgradeNote').textContent = out
+      ? 'Upgrade to keep practicing. Your debrief history stays with your account.'
+      : `You have ${Math.floor(trialInfo.remaining_sec / 60)} of ${totalMin} trial minutes left. Upgrading lifts the trial limits; your debrief history stays with your account.`;
   }
   updateStartBtn();
 }
@@ -1350,10 +1387,25 @@ if('IntersectionObserver' in window){
   }).observe(document.getElementById('trialPill'));
 }
 
+let upgradeCardOpen = false; // opened by hand (menu, debrief button) rather than by running out
+
 window.showTrialUpgrade = function(){
+  upgradeCardOpen = true;
+  setTrialInfo(trialInfo);
   const card = document.getElementById('trialUpgradeCard');
-  card.classList.remove('hidden');
-  card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  if(!card.classList.contains('hidden')) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+};
+
+window.closeTrialUpgrade = function(){
+  upgradeCardOpen = false;
+  setTrialInfo(trialInfo);
+};
+
+// Profile menu: a trial account upgrades, everyone else gets Stripe's portal.
+window.openPlanMenu = function(){
+  closeProfileMenu();
+  if(trialInfo) window.showTrialUpgrade();
+  else window.openBillingPortal();
 };
 
 // The server keeps each session's clock (see minutes.py) and has to be told
@@ -1589,13 +1641,12 @@ async function api(path, opts={}){
   if(!res.ok){
     const body = await res.text().catch(()=> '');
     if(res.status === 401) handleUnauthorized();
-    // A functional endpoint's require_approved 403 is distinct from
-    // "you're not allowed" (e.g. require_owner/require_admin's 403s) — this
-    // one means the account itself is real but still pending, so it gets
-    // its own screen instead of whatever generic error the caller would
-    // otherwise show (a stray alert() over a page that's about to be
-    // covered by the pending overlay anyway).
-    if(res.status === 403 && body.toLowerCase().includes('pending approval')) showPendingScreen();
+    // require_approved's two 403s each get their own full-page screen
+    // instead of whatever generic error the caller would otherwise show (a
+    // stray alert() over a page that's about to be covered anyway). Other
+    // 403s (require_owner, require_admin) are just "not allowed".
+    if(res.status === 403 && body.includes('"verification_required"')) showPendingScreen();
+    if(res.status === 403 && body.includes('"account_suspended"')) showSuspendedScreen();
     const err = new Error(`${res.status}: ${body}`);
     err.status = res.status;
     throw err;
@@ -1620,6 +1671,7 @@ function handleUnauthorized(){
   closeProfileMenu();
   document.getElementById('profileWrap').classList.add('hidden');
   hidePendingScreen();
+  hideSuspendedScreen();
   if(resetToken || inviteToken) return; // mid password-reset or accepting a team invite: keep that screen up, don't swap it for the login form
   showAuthScreen('login', hadToken ? 'Your session expired, please log in again.' : '');
 }
@@ -1849,24 +1901,27 @@ window.openProfile = async function(){
   }
 };
 
-// Set only when Profile was opened from the pending-approval screen (see
-// openProfileFromPending below) — pendingScreen is a full-page overlay that
-// covers the app underneath, so closing Profile in that case has to bring
-// it back rather than leaving the pending user looking at the bare app,
-// which they still can't actually use (see auth.require_approved).
-let profileOpenedFromPending = false;
+// Set only when Profile was opened from one of the full-page overlays (the
+// verify-your-email screen or the suspended screen): those cover the app
+// underneath, so closing Profile has to bring the overlay back rather than
+// leave the user looking at the bare app, which they still can't use (see
+// auth.require_approved).
+let profileReturnOverlay = null;
 
-window.openProfileFromPending = function(){
-  profileOpenedFromPending = true;
-  hidePendingScreen();
+window.openProfileFromOverlay = function(overlayId){
+  profileReturnOverlay = overlayId;
+  document.getElementById(overlayId).classList.add('hidden');
+  if(overlayId === 'pendingScreen') stopVerifyPoll();
   openProfile();
 };
 
 window.closeProfile = function(){
   document.getElementById('profileScreen').classList.add('hidden');
-  if(profileOpenedFromPending){
-    profileOpenedFromPending = false;
-    showPendingScreen();
+  if(profileReturnOverlay){
+    const overlay = profileReturnOverlay;
+    profileReturnOverlay = null;
+    if(overlay === 'pendingScreen') showPendingScreen();
+    else document.getElementById(overlay).classList.remove('hidden');
   }
 };
 
@@ -2159,41 +2214,54 @@ window.deleteAllSessions = async function(){
   }
 };
 
-// --- Pending Requests (admin only) --------------------------------------
-window.openPendingRequests = function(){
+// --- Accounts (admin only) ----------------------------------------------
+window.openAccounts = function(){
   closeProfileMenu();
-  document.getElementById('pendingRequestsScreen').classList.remove('hidden');
-  document.getElementById('pendingRequestsScreen').scrollIntoView({ behavior: 'smooth' });
-  loadPendingRequests();
+  document.getElementById('accountsScreen').classList.remove('hidden');
+  document.getElementById('accountsScreen').scrollIntoView({ behavior: 'smooth' });
+  loadAccounts();
 };
 
-window.closePendingRequests = function(){
-  document.getElementById('pendingRequestsScreen').classList.add('hidden');
+window.closeAccounts = function(){
+  document.getElementById('accountsScreen').classList.add('hidden');
 };
 
-async function loadPendingRequests(){
-  const list = document.getElementById('pendingRequestsList');
-  list.innerHTML = '<p class="history-empty">Loading…</p>';
-  let pending;
+function accountChip(text, kind){
+  const chip = document.createElement('span');
+  chip.className = 'account-chip' + (kind ? ' ' + kind : '');
+  chip.textContent = text;
+  return chip;
+}
+
+async function accountAction(btn, busyLabel, path, failLabel){
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = busyLabel;
   try{
-    pending = await api('/auth/pending');
+    await api(path, { method: 'POST' });
+    await loadAccounts(); // redraw from the server rather than guess at the new state
+  }catch(e){
+    btn.disabled = false;
+    btn.textContent = original;
+    alert(failLabel + ': ' + errorDetail(e).message);
+  }
+}
+
+async function loadAccounts(){
+  const list = document.getElementById('accountsList');
+  let accounts;
+  try{
+    accounts = await api('/admin/accounts');
   }catch(e){
     list.innerHTML = '';
     const p = document.createElement('p');
     p.className = 'history-empty';
-    p.textContent = 'Could not load pending requests: ' + e.message;
+    p.textContent = 'Could not load accounts: ' + errorDetail(e).message;
     list.appendChild(p);
     return;
   }
   list.innerHTML = '';
-  if(!pending.length){
-    const p = document.createElement('p');
-    p.className = 'history-empty';
-    p.textContent = 'Nothing waiting on approval right now.';
-    list.appendChild(p);
-    return;
-  }
-  pending.forEach(u => {
+  accounts.forEach(u => {
     const row = document.createElement('div');
     row.className = 'history-row';
 
@@ -2201,43 +2269,50 @@ async function loadPendingRequests(){
     summary.className = 'history-summary';
     summary.style.cursor = 'default'; // not an expand/collapse row, just a listing
 
+    const info = document.createElement('div');
+    info.className = 'history-info';
     const main = document.createElement('div');
     main.className = 'history-main';
-    main.textContent = u.email;
-
+    main.style.wordBreak = 'break-all';
+    main.appendChild(document.createTextNode(u.email));
+    if(u.suspended) main.appendChild(accountChip('SUSPENDED', 'danger'));
+    else if(!u.approved) main.appendChild(accountChip('AWAITING VERIFICATION', 'warn'));
+    else main.appendChild(accountChip(u.email_verified ? 'VERIFIED' : 'ACTIVE', 'good'));
     const meta = document.createElement('div');
     meta.className = 'history-meta';
-    meta.textContent = u.created_at ? new Date(u.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '';
+    meta.style.whiteSpace = 'normal';
+    const joined = u.created_at ? new Date(u.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '';
+    meta.textContent = `Joined ${joined} · ${u.plan} · ${u.practice_minutes} min practiced`;
+    info.append(main, meta);
 
-    const approveBtn = document.createElement('button');
-    approveBtn.className = 'btn-sm';
-    approveBtn.textContent = 'Approve';
-    approveBtn.style.marginLeft = '12px';
-    approveBtn.onclick = async () => {
-      approveBtn.disabled = true;
-      approveBtn.textContent = 'Approving…';
-      try{
-        await api(`/auth/approve/${u.id}`, { method: 'POST' });
-        row.remove(); // gone from this admin's list the instant it's handled, no full reload needed
-        if(!list.children.length){
-          const p = document.createElement('p');
-          p.className = 'history-empty';
-          p.textContent = 'Nothing waiting on approval right now.';
-          list.appendChild(p);
-        }
-      }catch(e){
-        approveBtn.disabled = false;
-        approveBtn.textContent = 'Approve';
-        alert('Could not approve: ' + e.message);
+    const actions = document.createElement('div');
+    actions.className = 'history-actions';
+    if(!u.approved && !u.suspended){
+      const approveBtn = document.createElement('button');
+      approveBtn.className = 'btn-sm';
+      approveBtn.textContent = 'Approve manually';
+      approveBtn.title = "Use when their verification email never arrived";
+      approveBtn.onclick = () => accountAction(approveBtn, 'Approving…', `/auth/approve/${u.id}`, 'Could not approve');
+      actions.appendChild(approveBtn);
+    }
+    if(!u.is_admin){ // admin accounts can't be suspended (the server refuses too)
+      const btn = document.createElement('button');
+      if(u.suspended){
+        btn.className = 'btn-sm';
+        btn.textContent = 'Unsuspend';
+        btn.onclick = () => accountAction(btn, 'Unsuspending…', `/admin/accounts/${u.id}/unsuspend`, 'Could not unsuspend');
+      } else {
+        btn.className = 'btn-sm danger';
+        btn.textContent = 'Suspend';
+        btn.onclick = () => {
+          if(!window.confirm(`Suspend ${u.email}? They'll be blocked from sessions and history until you unsuspend them. This doesn't cancel a subscription.`)) return;
+          accountAction(btn, 'Suspending…', `/admin/accounts/${u.id}/suspend`, 'Could not suspend');
+        };
       }
-    };
+      actions.appendChild(btn);
+    }
 
-    const right = document.createElement('div');
-    right.style.display = 'flex';
-    right.style.alignItems = 'center';
-    right.append(meta, approveBtn);
-
-    summary.append(main, right);
+    summary.append(info, actions);
     row.appendChild(summary);
     list.appendChild(row);
   });
@@ -2358,12 +2433,63 @@ window.openBillingPortal = async function(){
   }
 };
 
+// The verify-your-email screen. While it's up, quietly re-check every few
+// seconds: the link is usually clicked in another tab or on a phone, and
+// this one should let them in without being told to refresh.
+let verifyPollTimer = null;
+function stopVerifyPoll(){
+  if(verifyPollTimer){ clearInterval(verifyPollTimer); verifyPollTimer = null; }
+}
 function showPendingScreen(){
   document.getElementById('pendingScreen').classList.remove('hidden');
+  if(!verifyPollTimer){
+    verifyPollTimer = setInterval(() => {
+      if(document.visibilityState === 'visible' && TOKEN) checkAuth();
+    }, 5000);
+  }
 }
 function hidePendingScreen(){
   document.getElementById('pendingScreen').classList.add('hidden');
+  stopVerifyPoll();
 }
+function showSuspendedScreen(){
+  hidePendingScreen();
+  document.getElementById('suspendedScreen').classList.remove('hidden');
+}
+function hideSuspendedScreen(){
+  document.getElementById('suspendedScreen').classList.add('hidden');
+}
+
+window.resendFromPending = async function(){
+  const btn = document.getElementById('pendingResendBtn');
+  const errEl = document.getElementById('pendingScreenError');
+  const okEl = document.getElementById('pendingScreenSuccess');
+  errEl.classList.add('hidden'); okEl.classList.add('hidden');
+  btn.disabled = true;
+  try{
+    await api('/auth/resend-verification', { method: 'POST' });
+    okEl.textContent = 'Sent. Give it a minute, and check spam.';
+    okEl.classList.remove('hidden');
+  }catch(e){
+    errEl.textContent = e.status === 429
+      ? "That's been sent a few times already. Check your inbox and spam, and try again in an hour if it still hasn't arrived."
+      : 'Could not resend: ' + errorDetail(e).message;
+    errEl.classList.remove('hidden');
+  }finally{
+    btn.disabled = false;
+  }
+};
+
+window.continueAfterVerifying = async function(){
+  const errEl = document.getElementById('pendingScreenError');
+  errEl.classList.add('hidden');
+  document.getElementById('pendingScreenSuccess').classList.add('hidden');
+  await checkAuth(); // hides this screen itself if the account is now approved
+  if(!document.getElementById('pendingScreen').classList.contains('hidden')){
+    errEl.textContent = "Not verified yet. Click the link in the email first, then come back here.";
+    errEl.classList.remove('hidden');
+  }
+};
 
 function onAuthenticated(me){
   const avatarEl = document.getElementById('profileAvatar');
@@ -2373,26 +2499,38 @@ function onAuthenticated(me){
   // Nothing to log out of in dev bypass (no real session), so no menu either.
   document.getElementById('profileWrap').classList.toggle('hidden', !!me.dev_bypass || !TOKEN);
   setTrialInfo(me.trial); // null unless this is a trial account
-  document.getElementById('pendingRequestsMenuBtn').classList.toggle('hidden', !me.is_admin);
+  document.getElementById('accountsMenuBtn').classList.toggle('hidden', !me.is_admin);
   document.getElementById('teamMenuBtn').classList.toggle('hidden', !me.is_team_owner);
   // A regular (non-owner) team member never paid anything and has no
   // billing role — the portal endpoint itself 403s them, so don't even
   // show a button that dead-ends.
   document.getElementById('manageSubBtn').classList.toggle('hidden', !!me.team_id && !me.is_team_owner);
 
-  // A signed-up-but-not-yet-approved account: real login, real JWT, just
-  // not allowed to use anything functional yet (see auth.require_approved).
-  // The pending screen covers the whole page, so none of the verify-banner/
-  // app setup below matters until that clears.
+  // Suspended by an admin: its own full-page screen, and nothing below
+  // matters until that's lifted.
+  if(me.suspended){
+    hidePendingScreen();
+    showSuspendedScreen();
+    return;
+  }
+  hideSuspendedScreen();
+
+  // Signed up but not verified yet: real login, real JWT, just not allowed
+  // to use anything functional until the email is verified, which is what
+  // approves an account (see auth.require_approved). The screen covers the
+  // whole page, so none of the banner/app setup below matters until then.
   if(me.approved === false){
-    showPendingScreen();
+    if(profileReturnOverlay !== 'pendingScreen'){ // don't cover Profile if that's where they went from this screen
+      const emailEl = document.getElementById('pendingEmail'); // gone if the payment note below replaced the paragraph it sits in
+      if(emailEl) emailEl.textContent = me.email || 'your email';
+      showPendingScreen();
+    }
     if(paymentJustSucceeded){
-      // The webhook that actually approves the account runs server-to-server
-      // and may not have landed yet by the time Stripe redirects back here —
-      // this isn't "your payment failed", just "give it a moment", so it
-      // gets its own note instead of the default pending message.
+      // Subscribing approves the account too, but the webhook that does it
+      // runs server-to-server and may not have landed by the time Stripe
+      // redirects back here: "give it a moment", not "your payment failed".
       document.getElementById('pendingScreenNote').textContent =
-        "Payment received! Finalizing your access — this usually takes a few seconds. Refresh if it's still pending shortly.";
+        "Payment received! Finalizing your access — this usually takes a few seconds.";
     }
     return;
   }

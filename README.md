@@ -128,43 +128,82 @@ existing database automatically on startup, no manual migration needed.
 A "resend email" link on the verification banner (and in Profile) re-sends
 the same verification link, for when the original never arrived.
 
-Access approval: signing up creates an account but doesn't let it use
-anything functional (`/sessions`, `/turn`, `/end`, the avatar, session
-history, profile edits) until an admin approves it — see `auth.require_approved`
-in `main.py`. Login/signup still succeed for a pending account (so the
-frontend can show a clear "pending approval" screen instead of a confusing
-auth failure), just gated everywhere else.
+Access: signing up creates an account but doesn't let it use anything
+functional (`/sessions`, `/turn`, `/end`, the avatar, session history,
+profile edits) until it's approved, see `auth.require_approved`. Approval
+is automatic. Verifying the email approves the account
+(`users.mark_verified`); so does a password reset (it proves the same
+inbox), subscribing, accepting a team invite, and being the bootstrap
+admin. There is no manual approval step. Until then login still succeeds
+and the frontend shows a "Verify your email" screen with a resend button;
+it re-checks every few seconds, so clicking the link in another tab or on a
+phone lets the waiting one in without a refresh. Accounts that had already
+verified and were waiting on an admin when this changed are approved at
+startup; the rest are approved when they verify.
+
+`POST /auth/approve/{id}` (admin) is kept as an override for when a
+verification email never arrives. It does what clicking the link would
+have: verifies and approves.
+
+**Verification email delivery is now what lets people in.** If Resend isn't
+sending to arbitrary addresses (see emailer.py's note on the shared
+`onboarding@resend.dev` sender, which only delivers to the Resend account
+owner), nobody can verify and nobody gets access except through the manual
+override. Check `RESEND_API_KEY` and `CONSULTCASTAI_EMAIL_FROM` on a
+verified sending domain.
+
+Suspension: an admin can suspend any non-admin account from Profile ->
+Accounts (`GET /admin/accounts`, `POST /admin/accounts/{id}/suspend` and
+`/unsuspend`). It's a separate flag from approval and is checked first, so
+verifying or subscribing can't lift it, and checkout is refused for a
+suspended account. A suspended account can still log in, export its data
+and delete itself. Deleting it leaves a keyed hash of the email in
+`suspended_emails` (same hashing as `trial_records`), and a new account on
+that email starts suspended; unsuspending it clears the hash. Suspending
+doesn't cancel a Stripe subscription.
+
+Signup guards:
+- Disposable email domains are refused (`disposable.py`,
+  `disposable_email_domains.txt`). The list is a curated set of well-known
+  services, not an exhaustive one. `CONSULTCASTAI_BLOCKED_EMAIL_DOMAINS`
+  adds domains and `CONSULTCASTAI_ALLOWED_EMAIL_DOMAINS` lets one through,
+  both comma-separated, no deploy needed. Forwarding aliases that reach a
+  real inbox (SimpleLogin, Hide My Email and similar) are deliberately not
+  blocked. Team invites to a disposable address are refused too.
+- `SIGNUPS_PER_IP_PER_DAY` (3) accounts per IP per rolling 24 hours
+  (`users.record_signup`). Counts accounts actually created, not attempts,
+  so a typo doesn't use it up. Kept in the database (`signup_events`, IP
+  stored as a keyed hash), so a restart or redeploy doesn't reset it.
+  Team-invite signups are exempt: a team onboarding from one office shares
+  an address.
 
 **`CONSULTCASTAI_ADMIN_EMAIL` is critical, read this before deploying.**
-The `approved` column defaults to `false`, including on rows that already
-existed before this shipped — same class of mistake as the missing
-`CONSULTCASTAI_JWT_SECRET` incident, if you don't set this you lock
-yourself out of your own account the moment it ships. Set it to your own
-login email: that account is automatically promoted to admin + approved on
-startup (covers an existing account) and again right after signup (covers
-a fresh one), regardless of whether `is_admin` was ever set on it before.
-It's also where "someone signed up" notification emails go (best-effort,
-optional — nothing breaks if it's unset or a send fails, the real answer
-is always `GET /auth/pending`, and the app's Profile menu -> Pending
-Requests when you're logged in as that admin).
+Set it to your own login email: that account is automatically promoted to
+admin + approved on startup (covers an existing account) and again right
+after signup (covers a fresh one), regardless of whether `is_admin` was
+ever set on it before. Without an admin there is no accounts view and no
+way to suspend anyone. It's also where "someone signed up" notification
+emails go. Those are informational (best-effort, nothing breaks if it's
+unset or a send fails); the real list is always Profile -> Accounts.
 
-Rate limiting on the auth endpoints (`slowapi`, in-memory — no Redis needed
+Rate limiting on the auth endpoints (`slowapi`, in-memory, no Redis needed
 at this scale, a single Render instance): `/auth/login` 5/minute,
-`/auth/signup` 3/hour, `/auth/resend-verification` 3/hour,
-`/auth/forgot-password` 3/hour. Keyed off the real visitor IP, not
-`request.client.host` — Render sits behind a reverse proxy, so that's the
-proxy's own address for every request, and the limiter reads the first
-`X-Forwarded-For` entry instead. Get that wrong and either every visitor
-shares one "IP" (the limiter blocks all your users at once after a handful
-of legitimate logins) or it silently limits nothing at all. This is
-IP-based only, not account-based — a real, further layer worth adding
-eventually if targeted account lockout ever becomes necessary, not required
-for this first pass — and there's no CAPTCHA/bot-detection yet either,
-fine for launch, worth revisiting if abuse shows up.
+`/auth/signup` 10/hour (every attempt, on top of the accounts-per-day limit
+above), `/auth/resend-verification` 3/hour, `/auth/forgot-password` 3/hour.
 
-Not built yet: account-level lockout and CAPTCHA/bot-detection (see above),
-and a way to deny/reject a pending request rather than just leaving it
-pending or deleting the row directly.
+All per-IP limits key on `CF-Connecting-IP` (`get_real_ip` in main.py).
+Not `request.client.host`, and not `X-Forwarded-For`: its first entry is
+whatever the client sent. A request with a made-up `X-Forwarded-For`
+reached the app with that value as the client address, which let anyone
+reset their own limit on every request (checked against the live deploy).
+Cloudflare, which fronts every Render service, sets `CF-Connecting-IP`
+itself and rejects a request that tries to supply one. If this app ever
+moves somewhere not behind Cloudflare, that function has to change with it.
+
+This is IP-based only, not account-based, and there's no CAPTCHA or
+bot-detection: worth revisiting if abuse shows up.
+
+Not built yet: account-level lockout and CAPTCHA/bot-detection (see above).
 
 ## Billing (Stripe subscriptions)
 
@@ -175,8 +214,8 @@ one subscription and one pooled 100-session/month cap, with one owner who
 invites the rest — see `teams.py`.
 
 Flow: `POST /billing/create-checkout-session` (any signed-in account, even
-a still-pending one — subscribing is one of the two ways an account becomes
-approved, alongside manual admin approval) opens a Stripe-hosted Checkout
+an unverified one — subscribing approves an account too, alongside
+verifying the email; a suspended account is refused) opens a Stripe-hosted Checkout
 Session in `mode="subscription"` and returns its `checkout_url` to redirect
 the browser to. Stripe calls `POST /billing/webhook` server-to-server,
 verified by signature (never trust an unverified body), handling the full
@@ -202,7 +241,7 @@ frontend piece this needs.
 
 **Compliance**: the plan-selection screen discloses that it renews
 automatically and how to cancel (the actual substance of "click to cancel"
-rules, not boilerplate) — see the pending-approval screen's copy.
+rules, not boilerplate) — see the upgrade prompt's copy.
 
 Required env vars (all `sync: false` in `render.yaml`, fail closed if
 unset — nobody gets free access from a missing key): `STRIPE_SECRET_KEY`,
@@ -307,9 +346,10 @@ to it is never touched even if it looked eligible when first scanned.
 
 User controls, all gated on `auth.verify_user` only — deliberately not
 `require_approved` or `require_active_plan`, since a lapsed, canceled, or
-still-pending account must be able to reach these regardless (the Profile
-screen normally isn't reachable while pending, so the pending-approval
-screen itself gets a lightweight "Account settings" link straight to it):
+unverified, or suspended account must be able to reach these regardless
+(the Profile screen isn't otherwise reachable behind the verify-your-email
+and suspended screens, so each has an "Account settings" link straight to
+it):
 
 - `DELETE /sessions/{id}` — owner-only (`auth.require_owner`, same check
   `/turn` and `/end` already use: 404 if the id doesn't exist, 403 if it's
@@ -364,8 +404,8 @@ actually been checked, not assumed.
 An approved account that has never subscribed is a trial account
 (`minutes.is_trial`): not an admin, not a team member, and not a former
 subscriber, who gets the "subscribe" message rather than a second trial.
-Approval still comes first; a trial is what an approved account gets until
-it subscribes.
+Approval is automatic once the email is verified, so in practice a trial is
+what every new account gets as soon as it verifies, until it subscribes.
 
 | Rule | Value |
 |---|---|
@@ -446,8 +486,9 @@ stay in the file until the space is reused or the database is vacuumed.
 To give a trial back to an email by hand, delete its `trial_records` row.
 
 Known limits, deliberately left: a different address (including a `+tag`
-alias of the same inbox) is a different email and gets its own trial, each
-still needing approval; two sessions started at the same moment in two tabs
+alias of the same inbox) is a different email and gets its own trial,
+limited by the signup guards (verified email, no disposable domains, 3
+accounts per IP per day); two sessions started at the same moment in two tabs
 each get their own limit; and time between the last exchange and closing
 the tab without ending isn't charged.
 
