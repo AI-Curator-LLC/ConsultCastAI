@@ -1,0 +1,12 @@
+# Local additions to the disposable email blocklist, one domain per line.
+# disposable_email_domains.txt is the community-maintained list, kept as an
+# unmodified copy so it can be refreshed by replacing the file; anything
+# this project adds on top goes here instead. See disposable.py.
+#
+# Forwarding/alias services that deliver to a real inbox (SimpleLogin,
+# addy.io, DuckDuckGo, Apple's Hide My Email, Firefox Relay) are
+# deliberately not blocked: the person behind them can be reached.
+temp-mail.io
+tempmailaddress.com
+throwaway.email
+cool.fr.nf

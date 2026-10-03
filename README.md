@@ -163,11 +163,17 @@ that email starts suspended; unsuspending it clears the hash. Suspending
 doesn't cancel a Stripe subscription.
 
 Signup guards:
-- Disposable email domains are refused (`disposable.py`,
-  `disposable_email_domains.txt`). The list is a curated set of well-known
-  services, not an exhaustive one. `CONSULTCASTAI_BLOCKED_EMAIL_DOMAINS`
-  adds domains and `CONSULTCASTAI_ALLOWED_EMAIL_DOMAINS` lets one through,
-  both comma-separated, no deploy needed. Forwarding aliases that reach a
+- Disposable email domains are refused (`disposable.py`).
+  `disposable_email_domains.txt` is an unmodified copy of the
+  community-maintained blocklist from
+  github.com/disposable-email-domains/disposable-email-domains (about 9,200
+  domains, CC0); `disposable_email_domains_extra.txt` holds this project's
+  own additions. The upstream list changes constantly, so the copy goes
+  stale: to refresh it, replace the file with the current
+  `disposable_email_blocklist.conf` and redeploy.
+  `CONSULTCASTAI_BLOCKED_EMAIL_DOMAINS` adds domains and
+  `CONSULTCASTAI_ALLOWED_EMAIL_DOMAINS` lets one through, both
+  comma-separated, no deploy needed. Forwarding aliases that reach a
   real inbox (SimpleLogin, Hide My Email and similar) are deliberately not
   blocked. Team invites to a disposable address are refused too.
 - `SIGNUPS_PER_IP_PER_DAY` (3) accounts per IP per rolling 24 hours
@@ -480,8 +486,11 @@ trial again. To rotate the JWT secret safely, first set
 
 SQLite connections run with `secure_delete` on, so a deleted account's row
 is zeroed in the file rather than left readable in freed pages. That only
-applies to deletions from here on; rows deleted before it was turned on
-stay in the file until the space is reused or the database is vacuumed.
+covers deletions made after it was turned on, so the database is also
+vacuumed once at startup (`users._vacuum_once`, tracked by
+`PRAGMA user_version` so it doesn't repeat) to clear rows deleted before
+then. If that vacuum fails it's logged and retried on the next start; it
+never blocks startup.
 
 To give a trial back to an email by hand, delete its `trial_records` row.
 

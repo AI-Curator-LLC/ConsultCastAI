@@ -358,9 +358,36 @@ def _ensure_schema() -> None:
             #    column, so this can never un-suspend anyone.
             cur.execute(_sql("UPDATE users SET approved = ? WHERE email_verified = ? AND approved = ?"), (True, True, False))
             conn.commit()
+            if _LOCAL:
+                _vacuum_once(conn)
         finally:
             conn.close()
         _schema_ready = True
+
+
+# Bumped when a one-time maintenance step is added below; stored in the
+# SQLite file itself (PRAGMA user_version), so each step runs once per
+# database, not once per start.
+_SQLITE_MAINTENANCE_VERSION = 1
+
+
+def _vacuum_once(conn) -> None:
+    """secure_delete (see _connect) zeroes rows deleted from now on, but rows
+    deleted before it was turned on are still sitting in the file's free
+    pages: a deleted account's email among them. VACUUM rebuilds the file
+    without those pages. Done once, tracked by user_version. Never allowed
+    to stop startup: if it fails (no free disk space for the rebuild, say),
+    it's logged and tried again next start."""
+    try:
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        if version >= _SQLITE_MAINTENANCE_VERSION:
+            return
+        conn.execute("VACUUM")
+        conn.execute(f"PRAGMA user_version = {_SQLITE_MAINTENANCE_VERSION}")
+        conn.commit()
+        print("[consultcastai] users database vacuumed once to clear previously deleted rows from the file.")
+    except Exception as exc:
+        print(f"[consultcastai] one-time users database vacuum failed, will retry next start: {type(exc).__name__}: {exc}")
 
 
 def _run(query: str, params: tuple = (), fetch_one: bool = False, fetch_all: bool = False):

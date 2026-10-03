@@ -7,9 +7,15 @@ email. So an address at a known disposable service is refused before an
 account is created (main.py's /auth/signup, and /team/invite so an owner
 isn't left with an invite nobody can accept).
 
-The list is disposable_email_domains.txt next to this file. It's a curated
-set of well-known services, not an exhaustive one, and can be adjusted
-without a deploy:
+Two files next to this one, both one domain per line:
+- disposable_email_domains.txt: the community-maintained blocklist from
+  github.com/disposable-email-domains/disposable-email-domains
+  (disposable_email_blocklist.conf, public domain / CC0), copied unmodified.
+  These services add domains constantly, so it goes stale: to refresh it,
+  replace the file with the current upstream one and redeploy.
+- disposable_email_domains_extra.txt: this project's own additions.
+
+And two environment variables, for changes that shouldn't wait for a deploy:
 - CONSULTCASTAI_BLOCKED_EMAIL_DOMAINS: extra domains to refuse.
 - CONSULTCASTAI_ALLOWED_EMAIL_DOMAINS: domains to let through even if listed.
 Both comma-separated, read on every check so a change takes effect at once.
@@ -18,21 +24,28 @@ Both comma-separated, read on every check so a change takes effect at once.
 import os
 from pathlib import Path
 
-_LIST_PATH = Path(__file__).with_name("disposable_email_domains.txt")
+_LIST_PATHS = [
+    Path(__file__).with_name("disposable_email_domains.txt"),
+    Path(__file__).with_name("disposable_email_domains_extra.txt"),
+]
 
 
 def _load() -> frozenset[str]:
-    try:
-        lines = _LIST_PATH.read_text(encoding="utf-8").splitlines()
-    except OSError as exc:
-        # Missing list: signup still works, it just isn't filtered. Loud in
-        # the log rather than silently refusing (or silently allowing).
-        print(f"[consultcastai] disposable email list unreadable ({type(exc).__name__}: {exc}), no domains blocked by it.")
-        return frozenset()
-    return frozenset(
-        line.strip().lower() for line in lines
-        if line.strip() and not line.lstrip().startswith("#")
-    )
+    domains: set[str] = set()
+    for path in _LIST_PATHS:
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError as exc:
+            # A missing list: signup still works, it just isn't filtered by
+            # that file. Loud in the log rather than silently refusing (or
+            # silently allowing).
+            print(f"[consultcastai] disposable email list {path.name} unreadable ({type(exc).__name__}: {exc}), nothing blocked by it.")
+            continue
+        domains.update(
+            line.strip().lower() for line in lines
+            if line.strip() and not line.lstrip().startswith("#")
+        )
+    return frozenset(domains)
 
 
 _BUILT_IN = _load()

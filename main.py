@@ -83,7 +83,7 @@ print(
 # Bump this string any time prompts.py changes and you need
 # to confirm a restart actually picked up the new files, rather than
 # guessing. Check the uvicorn startup log for this exact line.
-BUILD_MARKER = "auto-approve-v1"
+BUILD_MARKER = "blocklist-vacuum-v1"
 print(f"[consultcastai] BUILD MARKER: {BUILD_MARKER}")
 
 # Never prints the key itself, just whether one's configured and which
