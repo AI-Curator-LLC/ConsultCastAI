@@ -85,6 +85,11 @@ def alive(jti: str | None, user_id: str, ask_suite: bool) -> bool:
         "UPDATE sso_sessions SET last_checked_at = ?, expires_at = ? WHERE jti = ?",
         (now.isoformat(), (now + SSO_LIFETIME).isoformat(), jti),
     )
+    # The same answer says what the person's suite plan includes right now:
+    # keep that up to date too, so a plan that ended at the suite stops
+    # counting here within one recheck (users.note_suite_plan).
+    if "apps" in answer:
+        users.note_suite_plan(user_id, answer.get("apps"), bool(answer.get("email_verified")))
     return True
 
 

@@ -85,7 +85,8 @@ class SessionRecord(BaseModel):
     # paused or ended, and on a record that predates this), run_sec is every
     # already-closed stretch added up, charged_sec is how much has been
     # written to the minutes ledger so far (so settling twice never double-
-    # charges). time_limit_sec is set only for a trial session.
+    # charges). time_limit_sec is set for a trial session and for a paid
+    # one while paid minutes are enforced (what was left when it started).
     run_since: str | None = None
     run_sec: float = 0
     paused_at: str | None = None
@@ -104,6 +105,8 @@ class StartSessionResponse(SessionRecord):
     # Set only for a trial account: remaining minutes and this session's
     # limit, so the frontend can show the counter without a second request.
     trial: dict | None = None
+    # The same for a paid account (minutes.paid_status), None otherwise.
+    paid_minutes: dict | None = None
 
 
 class StartSessionRequest(BaseModel):
@@ -131,6 +134,7 @@ class EndSessionResponse(BaseModel):
     debrief: str
     duration_sec: int
     trial: dict | None = None  # updated trial status after this session's time was charged
+    paid_minutes: dict | None = None  # the same for a paid account
 
 
 class AvatarTokenRequest(BaseModel):

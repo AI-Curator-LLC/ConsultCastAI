@@ -420,7 +420,7 @@ what every new account gets as soon as it verifies, until it subscribes.
 | Warning before a trial session ends | `TRIAL_WARNING_SECONDS` (60) |
 | Trial counts as used up | less than a minute left (the counter reads in whole minutes) |
 | Email verification | required before any account's first session |
-| Paid plans | not limited on minutes; tracked per user, and per team for team members |
+| Paid plans | a monthly allowance of minutes, see "Paid minutes and top-ups" below; tracked per user, and per team for team members |
 
 All of it is env vars in `minutes.py`, declared in `render.yaml`.
 
@@ -463,6 +463,99 @@ the counter never needs a second request.
 Session duration (`duration_sec`) now comes from the same persisted clock
 rather than an in-memory start time, so a restart or redeploy mid-session
 no longer zeroes it.
+
+## Paid minutes and top-ups
+
+Paid plans include practice minutes each calendar month (UTC), counted from
+the same ledger as the trial. Nothing about the trial changed.
+
+| Rule | Value |
+|---|---|
+| Pro, minutes a month | `PRO_MONTHLY_MINUTES` (120), for the one account |
+| Team, minutes a month | `TEAM_MONTHLY_MINUTES` (1,000), shared by the team: one pool for the owner and every member |
+| Pro through the suite's plan | the Pro allowance (`SUITE_PLAN_GRANTS_PRO`, on) |
+| One block of extra minutes | `TOPUP_BLOCK_MINUTES` (100), a one-time payment at the Stripe Price in `STRIPE_PRICE_ID_TOPUP`; the button reads `TOPUP_PRICE_LABEL` ("$40") |
+| Warning before a paid session ends | `PAID_WARNING_SECONDS` (60) |
+| Minutes count as used up | less than `PAID_MIN_START_SECONDS` (60) left |
+| The switch | `PAID_MINUTES_ENFORCED` (on). Off: paid plans are recorded, never limited, and show no counter |
+| Admin accounts | not limited, as before |
+
+All of it is env vars read in `minutes.py`, declared in `render.yaml`.
+
+**Who is on which plan** (`minutes.paid_plan`). A team member, the owner
+included, draws on the team's pool, kept under the team's id. An account
+with its own active subscription is Pro, with its own pool. An account
+whose person holds the AI Curator Consulting Suite plan is Pro too
+(`minutes.suite_pro`): the suite says what the plan includes at every
+sign-in and at every recheck of a sign-in, `users.note_suite_plan` records
+whether that includes the Suite plan and when it was said, and the answer
+stops counting after `SUITE_PLAN_MAX_AGE_DAYS` (8) without a fresh one.
+Only an address the suite has confirmed counts. Before this, the suite's
+plan gave nothing here: such a person was an ordinary trial account.
+
+**The month's figure.** The ledger was already one record per owner per
+calendar month (`usage_records`, key `<owner id>:<YYYY-MM>`, field
+`seconds_used`), written for the user and, for a team member, for the
+team. The month's use for a pool is that record for the current month,
+read as it is: no new storage, no migration, and every record written
+before this change means what it always meant. A new month simply has no
+record yet, which is how the allowance comes back.
+
+**Extra minutes (top-ups).** `POST /billing/topup-checkout-session` opens
+Stripe Checkout in payment mode for one block. A Pro account buys for
+itself; on a team only the owner can buy, for the whole team (a member
+gets "Ask your team owner to add minutes"). With `STRIPE_PRICE_ID_TOPUP`
+unset there is no button and the endpoint answers 400 `topup_unavailable`;
+nothing else is affected.
+
+The block is credited by `/billing/webhook` when Stripe confirms the
+payment (`checkout.session.completed` with `payment_status: paid`, or
+`checkout.session.async_payment_succeeded` for a payment that settles
+later), never by the browser coming back. Crediting is one INSERT into
+`topup_purchases` (in the users database, `topups.py`) whose primary key
+is Stripe's id for that Checkout: a webhook that is retried or replayed
+hits the key and adds nothing. The balance is not stored: it is everything
+bought (the sum of those rows) minus everything used
+(`store.get_topup_used`, one `<owner id>:topup` record in the usage store).
+
+Extra minutes are used only after the month's minutes are gone
+(`minutes.settle` takes each charge from the month first and only the
+part that doesn't fit from the balance), carry over from month to month,
+and can only be used while the subscription is active; the balance stays
+on record otherwise. Deleting an account deletes its purchases and its
+usage records. A refund in Stripe does not take minutes back: remove the
+row from `topup_purchases` by hand if that is wanted.
+
+**Enforcement**, the same shape as the trial's. A paid session's
+`time_limit_sec` is whatever the pool had left when it started (the
+month's minutes plus extra minutes); there is no per-session cap. The page
+warns one minute before and ends the session itself at the limit, with a
+normal debrief. `/turn` refuses with a 402 `minutes_session_limit` past
+the limit plus `TRIAL_TURN_GRACE_SECONDS`, and also when a team's pool has
+been used up by a colleague's session in the meantime. Time past the limit
+is never charged. With under a minute left `auth.require_active_plan`
+refuses a new session with a 402 `minutes_exhausted`. The monthly session
+counts (20 for Pro, 100 pooled for Team) are unchanged and still apply.
+
+**Frontend.** `/auth/me`, `/sessions`, `/end`, `/pause` and `/resume`
+carry `paid_minutes` next to `trial` (`minutes.paid_status`). The header
+counter reads "84 of 120 minutes left this month" ("... of 1,000 team
+minutes left this month" on a team), with "+ 100 extra" when there is a
+balance. When the minutes are used, a panel says so, says when they reset
+(the first day of next month, UTC) and offers "Add 100 minutes for $40" to
+a Pro account or a team owner; the account menu has "Add minutes" for the
+same people. Coming back from Stripe (`?payment=topup_success`) the page
+re-reads `/auth/me` until the new balance shows. A live avatar session on a
+paid plan keeps its 30-minute limit: whichever limit comes first applies.
+
+**Switching top-ups on.** In Stripe: create a product "100 extra practice
+minutes" with a one-time Price of $40, and add
+`checkout.session.async_payment_succeeded` to the events the existing
+webhook endpoint listens for. In Render: set `STRIPE_PRICE_ID_TOPUP` on
+`consultcastai-api` to that Price's id. To turn the paid cap off without a
+code change, set `PAID_MINUTES_ENFORCED` to `0` there.
+
+Tests: `python tests/test_minutes.py`.
 
 **One trial per email.** The first time a trial account is charged any
 session time, `users.record_trial_used` writes a row to `trial_records`: a

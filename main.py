@@ -36,6 +36,7 @@ import sso_sessions
 import store
 import suite_sso
 import teams
+import topups
 import users
 from models import (
     SignupRequest,
@@ -293,6 +294,9 @@ def sso_exchange(req: SsoExchangeRequest, background_tasks: BackgroundTasks):
     # The suite already proved the mailbox, which is what approves an account here.
     if person.get("email_verified") and not user.email_verified:
         users.mark_verified(user.id)
+    # What the person's suite plan includes, as of this sign-in. The Suite
+    # plan itself makes the account Pro here (minutes.suite_pro).
+    users.note_suite_plan(user.id, person.get("apps"), bool(person.get("email_verified")), minutes.now_utc())
     user = _apply_team_invite(users.get_user_by_id(user.id), req.invite_token)
     try:
         token = users.issue_token(user, sso_jti=sso_sessions.create(user.id, person["sid"]))
@@ -542,7 +546,7 @@ def me(user: auth.AuthUser = Depends(auth.verify_user)):
             "created_at": None, "name": None, "company": None,
             "is_admin": True, "approved": True, "suspended": False,
             "team_id": None, "is_team_owner": False,
-            "trial": None,
+            "trial": None, "paid_minutes": None, "plan_minutes": minutes.plan_minutes(),
         }
     account = users.get_user_by_id(user.rep_id)
     if not account:
@@ -560,6 +564,12 @@ def me(user: auth.AuthUser = Depends(auth.verify_user)):
         # None unless this is a trial account; drives the "N of 10 trial
         # minutes left" counter and the upgrade prompt.
         "trial": minutes.trial_status(account),
+        # None unless this is a paid account with the paid cap on; drives
+        # the "84 of 120 minutes left this month" counter, the "minutes
+        # used" panel and the "Add minutes" menu item.
+        "paid_minutes": minutes.paid_status(account),
+        # What each paid plan includes, for the upgrade panel's wording.
+        "plan_minutes": minutes.plan_minutes(),
     }
 
 
@@ -740,6 +750,110 @@ def create_checkout_session(req: CheckoutRequest, user: auth.AuthUser = Depends(
     return {"checkout_url": session.url}
 
 
+@app.post("/billing/topup-checkout-session")
+def create_topup_checkout_session(user: auth.AuthUser = Depends(auth.verify_user)):
+    """Stripe Checkout for one block of extra practice minutes: a one-time
+    payment (mode="payment"), not a subscription. Nothing is credited here.
+    The minutes are added when Stripe's webhook confirms the payment (see
+    _credit_topup below), to the pool named in the metadata set here: the
+    account for Pro, the team for a Team plan.
+
+    Only someone whose plan is active can buy, and on a team only the
+    owner: the minutes go to the whole team and the owner is the one who
+    pays for it."""
+    price_id = minutes.topup_price_id()
+    if not price_id or not minutes.paid_minutes_enforced():
+        raise HTTPException(status_code=400, detail={
+            "code": "topup_unavailable",
+            "message": "Extra minutes can't be bought right now.",
+        })
+    if not stripe.api_key:
+        raise HTTPException(500, "Billing is not configured")
+    account = None if auth.is_dev_bypass() else users.get_user_by_id(user.rep_id)
+    if not account:
+        raise HTTPException(400, "Extra minutes are for Pro and Team subscribers.")
+    if account.suspended:
+        raise HTTPException(status_code=403, detail={
+            "code": "account_suspended",
+            "message": "This account has been suspended. Contact support if you think this is a mistake.",
+        })
+    plan = minutes.paid_plan(account)
+    if plan is None:
+        raise HTTPException(status_code=400, detail={
+            "code": "topup_needs_plan",
+            "message": "Extra minutes are for Pro and Team subscribers. Subscribe first, then you can add minutes.",
+        })
+    if not plan["may_buy"]:
+        raise HTTPException(status_code=403, detail={
+            "code": "topup_owner_only",
+            "message": "Ask your team owner to add minutes.",
+        })
+
+    block_min = minutes.TOPUP_BLOCK_SEC // 60
+    # Paid for by the same Stripe customer as the subscription when there is
+    # one, so the payment sits with their other invoices.
+    if plan["pool_kind"] == "team":
+        team = teams.get_team(plan["pool_id"])
+        customer_id = team.stripe_customer_id if team else None
+    else:
+        customer_id = account.stripe_customer_id
+    params = dict(
+        mode="payment",  # one-time: nothing renews
+        line_items=[{"price": price_id, "quantity": 1}],
+        success_url=f"{_frontend_url()}/?payment=topup_success",
+        cancel_url=f"{_frontend_url()}/?payment=cancelled",
+        client_reference_id=user.rep_id,
+        metadata={
+            "kind": "topup",
+            "owner_kind": plan["pool_kind"],   # "user" or "team"
+            "owner_id": plan["pool_id"],
+            "topup_minutes": str(block_min),   # what was sold, fixed at the moment of sale
+        },
+    )
+    if customer_id:
+        params["customer"] = customer_id
+    try:
+        session = stripe.checkout.Session.create(**params)
+    except stripe.error.StripeError as exc:
+        print(f"[consultcastai] top-up checkout creation failed for account {user.rep_id}: {type(exc).__name__}: {exc}")
+        raise HTTPException(status_code=502, detail="Could not start checkout, please try again")
+
+    return {"checkout_url": session.url}
+
+
+# The most minutes one payment is ever allowed to credit, whatever its
+# metadata says: a guard against a wrong setting, not a product rule.
+_TOPUP_MAX_MINUTES_PER_PAYMENT = 10000
+
+
+def _credit_topup(obj: dict) -> None:
+    """A Checkout for extra minutes was paid: credit it, once. The key is
+    Stripe's id for that Checkout (topups.record_purchase), so the same
+    event delivered again, or a second event about the same Checkout,
+    credits nothing more. Never raises: a payload that doesn't add up is
+    logged and left alone."""
+    meta = obj.get("metadata") or {}
+    payment_id = obj.get("id")
+    owner_id = meta.get("owner_id")
+    owner_kind = meta.get("owner_kind")
+    try:
+        block_min = int(meta.get("topup_minutes") or 0)
+    except (TypeError, ValueError):
+        block_min = 0
+    if (not payment_id or not owner_id or owner_kind not in ("user", "team")
+            or not 0 < block_min <= _TOPUP_MAX_MINUTES_PER_PAYMENT):
+        print(f"[consultcastai] webhook: top-up checkout {payment_id!r} has unusable metadata, ignoring")
+        return
+    if obj.get("payment_status") != "paid":
+        # A payment method that settles later: Stripe sends
+        # checkout.session.async_payment_succeeded when the money arrives.
+        print(f"[consultcastai] webhook: top-up checkout {payment_id} not paid yet, waiting for the payment")
+        return
+    credited = topups.record_purchase(payment_id, owner_id, owner_kind, block_min * 60, obj.get("client_reference_id"))
+    print(f"[consultcastai] webhook: top-up checkout {payment_id}: "
+          f"{'credited ' + str(block_min) + ' minutes to ' + owner_kind + ' ' + owner_id if credited else 'already credited, nothing added'}")
+
+
 @app.post("/billing/portal-session")
 def create_portal_session(user: auth.AuthUser = Depends(auth.verify_user)):
     """Stripe's own hosted Customer Portal: cancel, update the payment
@@ -862,11 +976,22 @@ async def stripe_webhook(request: Request):
 
     event_type = event["type"]
     obj = event["data"]["object"]
+    # Recent versions of Stripe's library hand back their own object type,
+    # whose .get() raises instead of answering. Everything below reads the
+    # payload with .get(), so turn it into a plain dict first.
+    if not isinstance(obj, dict) and hasattr(obj, "to_dict"):
+        obj = obj.to_dict()
 
     # A malformed/unexpected payload should never 500 back to Stripe (that
     # just triggers pointless retries) or silently grant access with
     # made-up data — every branch below logs and returns 200 instead.
-    if event_type == "checkout.session.completed":
+    if (event_type in ("checkout.session.completed", "checkout.session.async_payment_succeeded")
+            and (obj.get("metadata") or {}).get("kind") == "topup"):
+        # Extra minutes (a one-time payment), not a subscription: nothing
+        # about the account's plan changes.
+        _credit_topup(obj)
+
+    elif event_type == "checkout.session.completed":
         user_id = obj.get("client_reference_id")
         plan = (obj.get("metadata") or {}).get("plan")
         subscription_id = obj.get("subscription")
@@ -963,7 +1088,8 @@ def start_session(req: StartSessionRequest, user: auth.AuthUser = Depends(auth.r
         conversation = [ConversationTurn(role="assistant", content=opener)]
 
     # A trial session gets a time limit: the per-session cap, or whatever is
-    # left of the trial if that's less. The clock starts here, after the
+    # left of the trial if that's less. A paid session's limit is whatever
+    # its plan's minutes have left. The clock starts here, after the
     # opener call above, so it runs from when the session actually exists
     # rather than while the opening line is still being generated.
     account = _account_for(user.rep_id)
@@ -990,13 +1116,14 @@ def start_session(req: StartSessionRequest, user: auth.AuthUser = Depends(auth.r
     # has to match exactly what require_active_plan checked against, or the
     # pooled cap silently stops being pooled.
     if not auth.is_dev_bypass() and not user.is_admin:
-        month_key = datetime.now(timezone.utc).strftime('%Y-%m')
+        month_key = minutes.month_key(now)
         if account and account.team_id:
             store.increment_team_session_count(account.team_id, month_key)
         else:
             store.increment_session_count(user.rep_id, month_key)
 
-    return StartSessionResponse(**session.model_dump(), trial=minutes.trial_status(account))
+    return StartSessionResponse(**session.model_dump(), trial=minutes.trial_status(account),
+                                paid_minutes=minutes.paid_status(account))
 
 
 @app.post("/sessions/{session_id}/turn", response_model=TurnResponse)
@@ -1013,10 +1140,23 @@ def send_turn(session_id: str, req: TurnRequest, user: auth.AuthUser = Depends(a
     if minutes.is_paused(session):
         raise HTTPException(409, "This session is paused. Resume it to continue.")
     minutes.ensure_tracking(session, minutes.now_utc())
+    owner = _account_for(session.rep_id)
     if minutes.over_limit(session, minutes.now_utc()):
+        if owner is None or minutes.is_trial(owner):
+            raise HTTPException(status_code=402, detail={
+                "code": "trial_session_limit",
+                "message": "This trial session has reached its time limit.",
+            })
         raise HTTPException(status_code=402, detail={
-            "code": "trial_session_limit",
-            "message": "This trial session has reached its time limit.",
+            "code": "minutes_session_limit",
+            "message": "This month's minutes are used, so this session has reached its limit.",
+        })
+    # A team's minutes are one pool: a colleague practicing at the same time
+    # can use it up while this session is still inside its own limit.
+    if minutes.pool_spent(session, owner, minutes.now_utc()):
+        raise HTTPException(status_code=402, detail={
+            "code": "minutes_session_limit",
+            "message": "This month's minutes are used, so this session has reached its limit.",
         })
 
     persona = content.get_persona(_persona_id_for(session))
@@ -1046,7 +1186,7 @@ def send_turn(session_id: str, req: TurnRequest, user: auth.AuthUser = Depends(a
     # Every turn settles the time used so far, so a session that's never
     # formally ended (tab closed, browser crashed) has still been charged
     # for everything up to its last exchange.
-    minutes.settle(session, _account_for(session.rep_id), minutes.now_utc())
+    minutes.settle(session, owner, minutes.now_utc())
     store.save(session)
 
     return TurnResponse(
@@ -1073,9 +1213,10 @@ def end_session(session_id: str, user: auth.AuthUser = Depends(auth.require_appr
     # hands back the debrief already generated instead of paying for a new
     # one, and can't re-open the clock.
     if session.status == "completed" and session.debrief:
+        done_for = _account_for(session.rep_id)
         return EndSessionResponse(
             session_id=session.id, debrief=session.debrief, duration_sec=session.duration_sec,
-            trial=minutes.trial_status(_account_for(session.rep_id)),
+            trial=minutes.trial_status(done_for), paid_minutes=minutes.paid_status(done_for),
         )
 
     # The server's own clock (see minutes.py), not an in-memory start time
@@ -1111,7 +1252,7 @@ def end_session(session_id: str, user: auth.AuthUser = Depends(auth.require_appr
 
     return EndSessionResponse(
         session_id=session.id, debrief=debrief, duration_sec=duration_sec,
-        trial=minutes.trial_status(account),
+        trial=minutes.trial_status(account), paid_minutes=minutes.paid_status(account),
     )
 
 
@@ -1132,7 +1273,8 @@ def pause_session(session_id: str, user: auth.AuthUser = Depends(auth.require_ap
     minutes.pause(session, now)
     minutes.settle(session, account, now)
     store.save(session)
-    return {"paused": minutes.is_paused(session), "trial": minutes.trial_status(account)}
+    return {"paused": minutes.is_paused(session), "trial": minutes.trial_status(account),
+            "paid_minutes": minutes.paid_status(account)}
 
 
 @app.post("/sessions/{session_id}/resume")
@@ -1145,7 +1287,9 @@ def resume_session(session_id: str, user: auth.AuthUser = Depends(auth.require_a
         raise HTTPException(409, "This session has already ended")
     minutes.resume(session, minutes.now_utc())
     store.save(session)
-    return {"paused": minutes.is_paused(session), "trial": minutes.trial_status(_account_for(session.rep_id))}
+    account = _account_for(session.rep_id)
+    return {"paused": minutes.is_paused(session), "trial": minutes.trial_status(account),
+            "paid_minutes": minutes.paid_status(account)}
 
 
 @app.get("/sessions/mine")
@@ -1255,6 +1399,7 @@ def export_my_data(user: auth.AuthUser = Depends(auth.verify_user)):
         "plan": plan,
         "practice_seconds_total": store.get_total_seconds(user.rep_id),
         "trial": minutes.trial_status(account),
+        "paid_minutes": minutes.paid_status(account),
         "trial_record_created_at": trial_record.created_at if trial_record else None,
         "sessions": [_session_dict(s) for s in sessions],
     }
@@ -1298,6 +1443,7 @@ def _delete_account_now(account: users.User) -> None:
 
     store.delete_for_rep(account.id)
     store.delete_usage_records_for_rep(account.id)
+    topups.delete_for_owner(account.id)
     sso_sessions.end_for_user(account.id)
     teams.delete_invites_for_email(account.email)
     users.delete_user(account.id)

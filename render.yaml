@@ -75,6 +75,13 @@ services:
         sync: false
       - key: STRIPE_PRICE_TEAM_ANNUAL
         sync: false
+      # Extra practice minutes (see README's "Paid minutes and top-ups"): the
+      # id of a ONE-TIME Stripe Price ($40) for one block of 100 minutes.
+      # Blank: the "Add minutes" button is not shown and nothing else
+      # changes. The webhook endpoint above also needs the event
+      # checkout.session.async_payment_succeeded added to it.
+      - key: STRIPE_PRICE_ID_TOPUP
+        sync: false
 
       # Fixed for this deploy shape (local storage on the disk above, real
       # auth enforced, production CORS mode). Change here, not in the
@@ -118,6 +125,33 @@ services:
         value: "10"
       - key: TRIAL_WARNING_SECONDS
         value: "60"
+      # Paid minutes (see minutes.py and README's "Paid minutes and
+      # top-ups"). Pro: this many minutes each calendar month (UTC) for the
+      # one account. Team: this many a month, shared by the team (one pool
+      # for the owner and every member). Defaults match these values already.
+      - key: PRO_MONTHLY_MINUTES
+        value: "120"
+      - key: TEAM_MONTHLY_MINUTES
+        value: "1000"
+      # One block of extra minutes, and the price shown on its button. The
+      # amount actually charged is the Stripe Price in STRIPE_PRICE_ID_TOPUP:
+      # keep this label the same as that Price.
+      - key: TOPUP_BLOCK_MINUTES
+        value: "100"
+      - key: TOPUP_PRICE_LABEL
+        value: "$40"
+      - key: PAID_WARNING_SECONDS
+        value: "60"
+      # The switch for the whole paid cap. "0": paid plans are recorded but
+      # never limited and show no counter, exactly as before the cap existed.
+      # Can be changed in the Render dashboard without a code change.
+      - key: PAID_MINUTES_ENFORCED
+        value: "1"
+      # "1": a person whose AI Curator Consulting Suite plan is active is
+      # treated as Pro here (with Pro's minutes) when they arrive through
+      # the suite. "0": the suite's plan gives nothing here.
+      - key: SUITE_PLAN_GRANTS_PRO
+        value: "1"
       # Accounts one IP can create per rolling 24 hours (see README's signup
       # guards). Team-invite signups are exempt.
       - key: SIGNUPS_PER_IP_PER_DAY

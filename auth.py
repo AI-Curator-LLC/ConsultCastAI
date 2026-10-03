@@ -180,13 +180,19 @@ def require_active_plan(user: AuthUser = Depends(require_approved)) -> AuthUser:
     no subscription at all, the same class of self-lockout mistake flagged
     on earlier features.
 
-    Three kinds of account get through:
+    Four kinds of account get through:
     - a team member, riding entirely on the team's subscription (their own
       account has none), checked via account.team_id;
     - an individual with an active subscription;
+    - an individual whose AI Curator Consulting Suite plan covers this app
+      (minutes.suite_pro), treated as Pro;
     - a trial: approved, never subscribed (see minutes.is_trial), with trial
       minutes left. A former subscriber is not a trial and gets the
-      "subscribe" message instead."""
+      "subscribe" message instead.
+
+    A paid account also needs minutes left: this month's, or extra minutes
+    it has bought (minutes.paid_status; switched off, that check is
+    skipped)."""
     if _dev_bypass_enabled() or user.is_admin:
         return user
     account = users.get_user_by_id(user.rep_id)
@@ -195,14 +201,14 @@ def require_active_plan(user: AuthUser = Depends(require_approved)) -> AuthUser:
 
     _require_verified_for_first_session(account)
 
-    month_key = datetime.now(timezone.utc).strftime("%Y-%m")
+    month_key = minutes.month_key()
     if account.team_id:
         team = teams.get_team(account.team_id)
         if not team or not teams.team_subscription_active(team):
             raise HTTPException(status_code=402, detail="Your team's subscription isn't active. Contact your team owner.")
         usage = store.get_team_usage(team.id, month_key)
         cap = TEAM_MONTHLY_SESSION_CAP
-    elif users.subscription_active(account):
+    elif users.subscription_active(account) or minutes.suite_pro(account):
         usage = store.get_usage(user.rep_id, month_key)
         cap = PRO_MONTHLY_SESSION_CAP
     elif minutes.is_trial(account):
@@ -218,6 +224,27 @@ def require_active_plan(user: AuthUser = Depends(require_approved)) -> AuthUser:
     else:
         raise HTTPException(status_code=402, detail="Your subscription isn't active. Please subscribe or update your billing.")
 
+    paid = minutes.paid_status(account)
+    if paid and paid["exhausted"]:
+        raise HTTPException(status_code=402, detail={"code": "minutes_exhausted", "message": minutes_exhausted_message(paid)})
+
     if usage.session_count >= cap:
         raise HTTPException(status_code=402, detail=f"You've used your {cap} sessions this month. Resets next month.")
     return user
+
+
+def minutes_exhausted_message(paid: dict) -> str:
+    """The sentence a paid account gets when its minutes are gone: whose
+    minutes, when they come back, and what can be done about it now."""
+    resets = datetime.fromisoformat(paid["resets_on"])
+    when = f"{resets:%B} {resets.day}"
+    included = f"{paid['included_sec'] // 60:,}"
+    if paid["plan"] == "team":
+        message = f"Your team has used this month's {included} minutes. They reset on {when}."
+    else:
+        message = f"You've used this month's {included} minutes. They reset on {when}."
+    if paid["can_buy"]:
+        message += f" You can add {paid['topup_block_min']} minutes for {paid['topup_price_label']}."
+    elif paid["is_team_member"] and paid["topup_available"]:
+        message += " Ask your team owner to add minutes."
+    return message

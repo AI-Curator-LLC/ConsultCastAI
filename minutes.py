@@ -2,14 +2,21 @@
 Session-time accounting: how many minutes of practice each account has
 actually used, measured on the server's own clock.
 
-Two jobs:
+Three jobs:
 - The trial cap. An approved account that has never had a subscription
   gets TRIAL_TOTAL_MINUTES of practice in total, at most
   TRIAL_SESSION_MINUTES per session (see is_trial/trial_status, enforced in
   auth.require_active_plan and main.py's /turn).
-- A ledger for everyone else. Paid plans aren't capped on minutes yet, but
-  their time is recorded the same way (per user, and per team for a team
-  member) so a cap can be added later without having to backfill anything.
+- The ledger. Everyone's time is recorded the same way, per calendar month
+  (UTC): per user, and per team for a team member.
+- Paid minutes. A Pro account gets PRO_MONTHLY_MINUTES a month; a Team
+  plan gets TEAM_MONTHLY_MINUTES a month, shared by the team (one pool for
+  the owner and every member, not an amount each). The month's use is what
+  the ledger recorded that month for the pool. Extra minutes bought as a
+  one-time payment (topups.py) are used only once the month's minutes are
+  gone, and carry over from month to month. See paid_plan/paid_status,
+  enforced in the same places as the trial. PAID_MINUTES_ENFORCED=0 turns
+  the paid cap off: time is still recorded, nothing is refused.
 
 Time is derived from server timestamps on the session record, never from
 anything the browser sends: a session's clock starts when the server
@@ -22,9 +29,11 @@ Limits are config, not scattered through the code.
 """
 
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import store
+import teams
+import topups
 import users
 
 TRIAL_TOTAL_SEC = int(os.environ.get("TRIAL_TOTAL_MINUTES", "10")) * 60
@@ -41,8 +50,69 @@ TRIAL_MIN_START_SEC = int(os.environ.get("TRIAL_MIN_START_SECONDS", "60"))
 TRIAL_TURN_GRACE_SEC = int(os.environ.get("TRIAL_TURN_GRACE_SECONDS", "10"))
 
 
+# --- paid plans ---
+# Minutes included each calendar month (UTC). Team's is one pool for the
+# whole team, however many members it has.
+PRO_INCLUDED_SEC = int(os.environ.get("PRO_MONTHLY_MINUTES", "120")) * 60
+TEAM_INCLUDED_SEC = int(os.environ.get("TEAM_MONTHLY_MINUTES", "1000")) * 60
+# Extra minutes are sold in blocks of this size. What a block costs is the
+# Stripe Price named by STRIPE_PRICE_ID_TOPUP; TOPUP_PRICE_LABEL is only the
+# words on the button and has to be kept in step with that Price by hand.
+TOPUP_BLOCK_SEC = int(os.environ.get("TOPUP_BLOCK_MINUTES", "100")) * 60
+TOPUP_PRICE_LABEL = os.environ.get("TOPUP_PRICE_LABEL", "").strip() or "$40"
+# Same meanings as the trial's two settings above, for a paid session.
+PAID_WARNING_SEC = int(os.environ.get("PAID_WARNING_SECONDS", "60"))
+PAID_MIN_START_SEC = int(os.environ.get("PAID_MIN_START_SECONDS", "60"))
+# How long an answer from the suite about the person's plan keeps counting.
+# A sign-in through the suite lasts 7 days at most and is rechecked every
+# few minutes while in use, so anything older than this is a sign-in that
+# ended, not a plan that is still known to be there.
+SUITE_PLAN_MAX_AGE = timedelta(days=int(os.environ.get("SUITE_PLAN_MAX_AGE_DAYS", "8")))
+
+
+def _flag(name: str, default: bool) -> bool:
+    raw = os.environ.get(name, "").strip().lower()
+    if not raw:
+        return default
+    return raw not in ("0", "false", "off", "no")
+
+
+def paid_minutes_enforced() -> bool:
+    """The switch for the whole paid cap. Off: paid plans are recorded and
+    never limited, with no counter on the page, exactly as before the cap
+    existed. Extra minutes already bought stay on record untouched."""
+    return _flag("PAID_MINUTES_ENFORCED", True)
+
+
+def suite_plan_counts() -> bool:
+    """Does the suite's own plan count as Pro here."""
+    return _flag("SUITE_PLAN_GRANTS_PRO", True)
+
+
+def topup_price_id() -> str:
+    """The Stripe Price a block of extra minutes is sold at. Blank: extra
+    minutes can't be bought (no button, the endpoint refuses)."""
+    return os.environ.get("STRIPE_PRICE_ID_TOPUP", "").strip()
+
+
+# The clock everything here reads. Replaceable so tests can move time (a
+# month end, a long session) without waiting for it: set_clock(fn) with a
+# function returning an aware UTC datetime, set_clock(None) to put the real
+# one back.
+_clock = None
+
+
+def set_clock(fn) -> None:
+    global _clock
+    _clock = fn
+
+
 def now_utc() -> datetime:
-    return datetime.now(timezone.utc)
+    return _clock() if _clock else datetime.now(timezone.utc)
+
+
+def month_key(now: datetime | None = None) -> str:
+    return (now or now_utc()).strftime("%Y-%m")
 
 
 def _parse_utc(value: str | None) -> datetime | None:
@@ -64,6 +134,8 @@ def is_trial(account: users.User | None) -> bool:
     former customer, who gets the "subscribe" message, not a second trial."""
     if account is None or account.is_admin or account.team_id:
         return False
+    if suite_pro(account):
+        return False  # covered by the suite's plan: Pro, not a trial
     return account.subscription_status is None and not account.stripe_subscription_id
 
 
@@ -98,13 +170,134 @@ def trial_status(account: users.User | None) -> dict | None:
 
 
 def session_time_limit(account: users.User | None) -> int | None:
-    """The limit for a session this account is about to start: the per-
-    session cap, or whatever's left of the trial if that's less. None for
-    anyone who isn't on a trial."""
+    """The limit for a session this account is about to start. A trial: the
+    per-session cap, or whatever's left of the trial if that's less. A paid
+    plan: whatever its pool has left (this month's minutes plus any extra
+    minutes); there is no per-session cap. None for anyone who isn't
+    limited (an admin, local dev, or a paid plan with the cap switched
+    off)."""
     status = trial_status(account)
-    if status is None:
+    if status is not None:
+        return min(TRIAL_SESSION_SEC, status["remaining_sec"])
+    paid = paid_status(account)
+    if paid is not None:
+        return paid["remaining_sec"]
+    return None
+
+
+# --- paid plans ------------------------------------------------------------
+
+def suite_pro(account: users.User | None) -> bool:
+    """True when this account's access comes from the person's AI Curator
+    Consulting Suite plan rather than a subscription of its own here: the
+    suite said so (users.note_suite_plan), recently enough, for an address
+    it has confirmed. Such an account is Pro, with Pro's minutes."""
+    if account is None or not suite_plan_counts():
+        return False
+    if not account.suite_plan or not account.email_verified:
+        return False
+    checked = _parse_utc(account.suite_plan_checked_at)
+    return checked is not None and now_utc() - checked <= SUITE_PLAN_MAX_AGE
+
+
+def paid_plan(account: users.User | None) -> dict | None:
+    """Which paid plan this account is on right now, and whose minutes it
+    draws on, or None if it isn't on one (a trial, a lapsed subscription).
+    Says nothing about admins or the on/off switch: see capped_plan.
+
+    - a team member (the owner included): the team's plan, one pool for the
+      whole team, kept under the team's id;
+    - an account with its own active subscription: Pro, its own pool;
+    - an account covered by the suite's plan: Pro, its own pool."""
+    if account is None:
         return None
-    return min(TRIAL_SESSION_SEC, status["remaining_sec"])
+    if account.team_id:
+        team = teams.get_team(account.team_id)
+        if not team or not teams.team_subscription_active(team):
+            return None
+        is_owner = team.owner_user_id == account.id
+        return {"plan": "team", "pool_id": team.id, "pool_kind": "team", "included_sec": TEAM_INCLUDED_SEC,
+                "via_suite": False, "is_team_member": not is_owner, "may_buy": is_owner}
+    own = users.subscription_active(account)
+    if own or suite_pro(account):
+        return {"plan": "pro", "pool_id": account.id, "pool_kind": "user", "included_sec": PRO_INCLUDED_SEC,
+                "via_suite": not own, "is_team_member": False, "may_buy": True}
+    return None
+
+
+def capped_plan(account: users.User | None) -> dict | None:
+    """paid_plan, for an account the cap actually applies to: None for an
+    admin (never limited, as before) and for everyone while the switch is
+    off."""
+    if account is None or account.is_admin or not paid_minutes_enforced():
+        return None
+    return paid_plan(account)
+
+
+def _next_month_start(now: datetime) -> datetime:
+    return datetime(now.year + (now.month == 12), now.month % 12 + 1, 1, tzinfo=timezone.utc)
+
+
+def paid_status(account: users.User | None) -> dict | None:
+    """What the frontend needs for a paid account's counter and its "minutes
+    used" panel, the paid sibling of trial_status. None for anyone the paid
+    cap doesn't apply to.
+
+    included_remaining_sec is what is left of this month's minutes;
+    topup_sec is the balance of extra minutes; remaining_sec is the two
+    together, which is all a session can use."""
+    plan = capped_plan(account)
+    if plan is None:
+        return None
+    now = now_utc()
+    included = plan["included_sec"]
+    used = store.get_usage(plan["pool_id"], month_key(now)).seconds_used
+    included_remaining = max(0, included - used)
+    topup = topups.balance_seconds(plan["pool_id"])
+    remaining = included_remaining + topup
+    return {
+        "plan": plan["plan"],
+        "via_suite": plan["via_suite"],
+        "included_sec": included,
+        "used_sec": min(included, used),
+        "included_remaining_sec": included_remaining,
+        "topup_sec": topup,
+        "remaining_sec": remaining,
+        "warning_sec": PAID_WARNING_SEC,
+        "exhausted": remaining < PAID_MIN_START_SEC,
+        # The first day of next month (UTC), when the included minutes are back.
+        "resets_on": _next_month_start(now).date().isoformat(),
+        "is_team_member": plan["is_team_member"],
+        # Whether this person is offered extra minutes: a Pro account or a
+        # team's owner, and only once a price has been set up for them.
+        "can_buy": plan["may_buy"] and bool(topup_price_id()),
+        # Whether extra minutes are on sale at all (a team member can't buy
+        # them, but is told to ask the owner only when the owner can).
+        "topup_available": bool(topup_price_id()),
+        "topup_block_min": TOPUP_BLOCK_SEC // 60,
+        "topup_price_label": TOPUP_PRICE_LABEL,
+    }
+
+
+def pool_spent(session, account: users.User | None, now: datetime) -> bool:
+    """True when the pool a paid session draws on has nothing left, counting
+    what this session has run but not yet written to the ledger. A session's
+    own limit (over_limit) already covers one person practicing alone; this
+    is for a team, where a colleague's session can use up the shared
+    minutes while this one is running. Same slack as over_limit."""
+    status = paid_status(account)
+    if status is None:
+        return False
+    unsettled = max(0.0, billable_seconds(session, now) - int(session.charged_sec or 0))
+    return status["remaining_sec"] - unsettled < -TRIAL_TURN_GRACE_SEC
+
+
+def plan_minutes() -> dict | None:
+    """What each paid plan includes, for the page's wording, or None while
+    the paid cap is switched off."""
+    if not paid_minutes_enforced():
+        return None
+    return {"pro_min": PRO_INCLUDED_SEC // 60, "team_min": TEAM_INCLUDED_SEC // 60}
 
 
 # --- per-session clock -----------------------------------------------------
@@ -136,7 +329,7 @@ def raw_seconds(session, now: datetime) -> float:
 
 
 def billable_seconds(session, now: datetime) -> float:
-    """raw_seconds, never past the session's own limit: a trial session that
+    """raw_seconds, never past the session's own limit: a session that
     overruns (a slow request, a tab left open) is charged its limit and no
     more."""
     raw = raw_seconds(session, now)
@@ -197,6 +390,16 @@ def settle(session, account: users.User | None, now: datetime) -> None:
         return
     if account is not None:
         month = now.strftime("%Y-%m")
+        # A paid plan uses this month's minutes first. Whatever part of this
+        # charge doesn't fit in what was left of them comes out of the
+        # pool's extra minutes, as far as those go. Worked out before the
+        # charge is written below, from the month's figure as it stood.
+        plan = capped_plan(account)
+        if plan is not None:
+            used_before = store.get_usage(plan["pool_id"], month).seconds_used
+            beyond_included = delta - max(0, plan["included_sec"] - used_before)
+            if beyond_included > 0:
+                store.add_topup_used(plan["pool_id"], min(beyond_included, topups.balance_seconds(plan["pool_id"])))
         store.add_seconds(account.id, month, delta)        # per user
         if account.team_id:
             store.add_seconds(account.team_id, month, delta)  # per account, pooled across the team

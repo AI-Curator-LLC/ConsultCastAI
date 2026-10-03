@@ -352,3 +352,42 @@ def get_total_seconds(owner_id: str) -> int:
         return sum(int(rec.get("seconds_used", 0)) for key, rec in data.items() if key.startswith(prefix))
     docs = _get_client().collection(_USAGE_COLLECTION).where("user_id", "==", owner_id).stream()
     return sum(int(d.to_dict().get("seconds_used", 0)) for d in docs)
+
+
+# --- extra minutes used (see topups.py and minutes.py) ----------------------
+# How much of an owner's bought extra minutes has been used, as one more
+# record in the same usage store: keyed like a month's record with "topup"
+# where the month would be, because it is not monthly (extra minutes carry
+# over from month to month). It has no seconds_used of its own, so
+# get_total_seconds above is unchanged by it, and it is removed with the
+# rest of an account's usage records when the account is deleted.
+
+_TOPUP_KEY = "topup"
+
+
+def add_topup_used(owner_id: str, seconds: int) -> None:
+    if seconds <= 0:
+        return
+    key = _usage_key(owner_id, _TOPUP_KEY)
+    if _LOCAL:
+        with _USAGE_LOCAL_LOCK:
+            data = _usage_read_all()
+            rec = data.get(key, {"user_id": owner_id, "month": _TOPUP_KEY})
+            rec["topup_used_seconds"] = rec.get("topup_used_seconds", 0) + seconds
+            data[key] = rec
+            _usage_write_all(data)
+        return
+    from google.cloud import firestore
+    _get_client().collection(_USAGE_COLLECTION).document(key).set(
+        {"user_id": owner_id, "month": _TOPUP_KEY, "topup_used_seconds": firestore.Increment(seconds)}, merge=True,
+    )
+
+
+def get_topup_used(owner_id: str) -> int:
+    key = _usage_key(owner_id, _TOPUP_KEY)
+    if _LOCAL:
+        with _USAGE_LOCAL_LOCK:
+            raw = _usage_read_all().get(key) or {}
+        return int(raw.get("topup_used_seconds", 0))
+    doc = _get_client().collection(_USAGE_COLLECTION).document(key).get()
+    return int((doc.to_dict() or {}).get("topup_used_seconds", 0)) if doc.exists else 0

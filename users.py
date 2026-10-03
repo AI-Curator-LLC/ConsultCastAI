@@ -98,6 +98,12 @@ class User:
     # approved on purpose: nothing that grants approval (verifying,
     # subscribing) lifts a suspension, only an admin does.
     suspended: bool = False
+    # Does the person's AI Curator Consulting Suite plan include this app
+    # (see note_suite_plan below and minutes.suite_pro). Written only from
+    # what the suite itself answers at sign-in and at each recheck, with
+    # the time of that answer, so an old answer stops counting on its own.
+    suite_plan: bool = False
+    suite_plan_checked_at: str | None = None  # ISO-8601 UTC
 
 
 # --- passwords -------------------------------------------------------------
@@ -257,6 +263,10 @@ _ADDED_COLUMNS = [
     # password of its own here). Only the token's hash is stored.
     ("delete_token_hash", "TEXT"),
     ("delete_token_expires", "TEXT"),
+    # Whether the suite's own plan covers this app, and when the suite last
+    # said so (see User.suite_plan).
+    ("suite_plan", "BOOLEAN NOT NULL DEFAULT FALSE"),
+    ("suite_plan_checked_at", "TEXT"),
 ]
 
 # Which emails have already had a trial (see the "trial records" section
@@ -285,6 +295,21 @@ CREATE TABLE IF NOT EXISTS signup_events (
 _SUSPENDED_EMAILS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS suspended_emails (
     email_hash TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL
+)
+"""
+
+# Extra practice minutes bought as a one-time payment (topups.py). One row
+# is one paid Stripe Checkout, keyed by Stripe's own id for it, which is
+# what makes a repeated webhook credit nothing the second time. Same DDL
+# for SQLite and Postgres.
+_TOPUP_PURCHASES_SCHEMA = """
+CREATE TABLE IF NOT EXISTS topup_purchases (
+    payment_id TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL,
+    owner_kind TEXT NOT NULL,
+    seconds INTEGER NOT NULL,
+    bought_by TEXT,
     created_at TEXT NOT NULL
 )
 """
@@ -344,6 +369,7 @@ def _ensure_schema() -> None:
             cur.execute(_SIGNUP_EVENTS_SCHEMA)
             cur.execute(_SUSPENDED_EMAILS_SCHEMA)
             cur.execute(_SSO_SESSIONS_SCHEMA)
+            cur.execute(_TOPUP_PURCHASES_SCHEMA)
             if _LOCAL:
                 cur.execute("PRAGMA table_info(users)")
                 existing = {row["name"] for row in cur.fetchall()}
@@ -454,6 +480,8 @@ def _row_to_user(row) -> User | None:
         stripe_subscription_id=row["stripe_subscription_id"],
         team_id=row["team_id"],
         suspended=bool(row["suspended"]),
+        suite_plan=bool(row["suite_plan"]),
+        suite_plan_checked_at=row["suite_plan_checked_at"],
     )
 
 
@@ -491,6 +519,30 @@ def get_user_by_suite_id(suite_user_id: str) -> User | None:
 
 def set_suite_user_id(user_id: str, suite_user_id: str) -> None:
     _run("UPDATE users SET suite_user_id = ? WHERE id = ?", (suite_user_id, user_id))
+
+
+# What the suite calls its own plan in the list of apps it answers with
+# (aicsuite entitlements.py: the apps the plan includes, plus "suite" when
+# the person holds the Suite plan itself).
+_SUITE_PLAN_MARK = "suite"
+
+
+def note_suite_plan(user_id: str, apps, email_verified: bool, now: datetime | None = None) -> None:
+    """Records what the suite just said about this person's plan. `apps` is
+    the list the suite answers with, or None when the suite could not check
+    (its payment provider was unreachable): then nothing is written and the
+    last answer stands until it gets too old to count (minutes.suite_pro).
+
+    Only the Suite plan itself counts, and only for an address the suite
+    has confirmed: otherwise signing up at the suite with a Suite
+    customer's address would be enough to take their plan."""
+    if not isinstance(apps, (list, tuple)):
+        return
+    has_plan = bool(email_verified) and _SUITE_PLAN_MARK in apps
+    _run(
+        "UPDATE users SET suite_plan = ?, suite_plan_checked_at = ? WHERE id = ?",
+        (has_plan, (now or datetime.now(timezone.utc)).isoformat(), user_id),
+    )
 
 
 def get_user_by_verification_token(token: str) -> User | None:

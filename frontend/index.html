@@ -626,6 +626,7 @@
           <button role="menuitem" onclick="openProfile()">Profile</button>
           <button role="menuitem" onclick="openDebriefHistory()">Debrief History</button>
           <button role="menuitem" id="manageSubBtn" onclick="openPlanMenu()">Manage subscription</button>
+          <button role="menuitem" class="hidden" id="addMinutesBtn" onclick="openAddMinutes()">Add minutes</button>
           <button role="menuitem" class="hidden" id="teamMenuBtn" onclick="openTeamScreen()">Team</button>
           <button role="menuitem" class="hidden" id="accountsMenuBtn" onclick="openAccounts()">Accounts</button>
           <div class="profile-menu-divider" role="separator"></div>
@@ -658,6 +659,7 @@
     <p class="eyebrow" id="trialUpgradeEyebrow">Trial complete</p>
     <h2 id="trialUpgradeTitle">You've used your trial minutes</h2>
     <p class="auth-note" id="trialUpgradeNote" style="margin:0;">Upgrade to keep practicing. Your debrief history stays with your account.</p>
+    <p class="auth-note hidden" id="planMinutesNote" style="margin:8px 0 0;"></p>
     <p class="auth-error checkout-error hidden" style="margin:10px 0 0;"></p>
     <div class="upgrade-actions">
       <button class="btn" data-checkout-btn onclick="startCheckout('pro_monthly')">Upgrade to Pro — $129/month</button>
@@ -673,6 +675,23 @@
          has to be stated plainly right next to the buttons that start it. -->
     <p class="fine-print">Billed automatically at the interval selected, renews until canceled. Cancel anytime from Manage subscription in the account menu (the round button at the top right). Access continues through the period you've already paid for. On a Team plan, canceling ends access for every invited member, not just the owner.</p>
     <button class="btn-sm hidden" id="trialUpgradeCloseBtn" onclick="closeTrialUpgrade()" style="margin-top:12px;">Not now</button>
+  </div>
+
+  <!-- The paid account's version of the panel above (see setPaidInfo):
+       shown when the plan's minutes for the month are used, or opened by
+       hand from "Add minutes" in the account menu. Same place and same
+       rules: never over a running session. -->
+  <div class="panel trial-upgrade hidden" id="minutesCard">
+    <p class="eyebrow" id="minutesCardEyebrow">Minutes used</p>
+    <h2 id="minutesCardTitle">You've used this month's minutes</h2>
+    <p class="auth-note" id="minutesCardNote" style="margin:0;"></p>
+    <p class="auth-error hidden" id="minutesCardError" style="margin:10px 0 0;"></p>
+    <div class="upgrade-actions hidden" id="minutesCardActions">
+      <button class="btn" id="minutesCardBuyBtn" onclick="startTopupCheckout()">Add minutes</button>
+    </div>
+    <p class="auth-note hidden" id="minutesCardAsk" style="margin:12px 0 0;">Ask your team owner to add minutes.</p>
+    <p class="fine-print hidden" id="minutesCardFine">A one-time payment, not a subscription. Extra minutes are used only after the month's minutes run out, they do not expire at the end of the month, and they can be used while the subscription is active.</p>
+    <button class="btn-sm hidden" id="minutesCardCloseBtn" onclick="closeMinutesCard()" style="margin-top:12px;">Not now</button>
   </div>
 
   <div class="session-grid">
@@ -893,6 +912,7 @@
       <div class="end-row" style="display:flex; gap:10px; flex-wrap:wrap;">
         <button class="btn" onclick="resetAll()">Practice another scenario</button>
         <button class="btn ghost hidden" id="debriefUpgradeBtn" onclick="showTrialUpgrade()">Upgrade to Pro</button>
+        <button class="btn ghost hidden" id="debriefAddMinutesBtn" onclick="openAddMinutes()">Add minutes</button>
       </div>
     </div>
   </section>
@@ -1195,6 +1215,10 @@ let idlePromptShownAt = null; // null = prompt not currently showing
 let trialInfo = null;            // { total_sec, remaining_sec, session_limit_sec, warning_sec, exhausted }
 let sessionTimeLimitSec = null;  // this session's limit in seconds, set by the server at start; null = none
 let sessionTrialBaseSec = null;  // trial seconds left when this session started; null when no session is running
+// The same for a paid account (null for a trial, an admin, or while the
+// paid cap is switched off): /auth/me's paid_minutes, see minutes.paid_status.
+let paidInfo = null;             // { plan, included_sec, included_remaining_sec, topup_sec, remaining_sec, warning_sec, exhausted, resets_on, can_buy, ... }
+let sessionPaidBase = null;      // { included, topup }: seconds left of each when this session started; null when no paid session is running
 
 // Discrete zones, not a smooth gradient: green through 9:59, yellow from
 // 10:00, red from 13:00. The bar visually maxes out at 15:00 and stays
@@ -1275,19 +1299,24 @@ function updateTimerDisplay(){
 // disconnect is about the avatar connection alone, so it stays gated on
 // avatar mode either way.
 function checkCostControls(elapsedSec){
-  const isTrialLimit = sessionTimeLimitSec !== null;
+  // A paid session's limit is whatever its plan's minutes had left when it
+  // started, which can be hours away. A live avatar session on a paid plan
+  // keeps its own 30-minute limit as well: whichever comes first applies.
+  const avatarFirst = sessionPaidBase !== null && outputMode === 'avatar'
+    && sessionTimeLimitSec !== null && HARD_LIMIT_SEC < sessionTimeLimitSec;
+  const isTrialLimit = sessionTimeLimitSec !== null && !avatarFirst; // the server's limit: a trial's, or a paid plan's minutes
   const limit = isTrialLimit ? sessionTimeLimitSec : (outputMode === 'avatar' ? HARD_LIMIT_SEC : null);
   if(limit !== null){
-    const warnAt = isTrialLimit ? Math.max(0, limit - trialWarningSec()) : HARD_LIMIT_WARNING_AT_SEC;
+    const warnAt = isTrialLimit ? Math.max(0, limit - limitWarningSec()) : HARD_LIMIT_WARNING_AT_SEC;
     if(!hardLimitWarningShown && elapsedSec >= warnAt){
       hardLimitWarningShown = true;
       showSessionNotice(isTrialLimit
-        ? trialWarningText(limit - elapsedSec)
+        ? limitWarningText(limit - elapsedSec)
         : '5 minutes left in this session — it will end automatically at the 30-minute mark, with your debrief.');
     }
     if(!hardLimitEndTriggered && elapsedSec >= limit){
       hardLimitEndTriggered = true;
-      if(isTrialLimit) showSessionNotice(trialEndText());
+      if(isTrialLimit) showSessionNotice(limitEndText());
       else hideSessionNotice();
       window.endSession(); // same path as clicking End yourself — normal debrief, not an error
       return; // endSession() tears down the avatar itself; nothing left to idle-check
@@ -1325,6 +1354,29 @@ function trialEndText(){
   if(cap !== null && sessionTimeLimitSec < cap) return "You've used all of your trial minutes, so this session has ended. Your debrief is below.";
   const capMin = cap !== null ? Math.round(cap / 60) : Math.round(sessionTimeLimitSec / 60);
   return `Trial sessions are limited to ${capMin} minutes, so this one has ended. Your debrief is below.`;
+}
+
+// The warning and the closing line for a session that reaches the server's
+// limit: the trial's wording for a trial session, the paid plan's for a
+// paid one.
+function limitWarningSec(){
+  if(sessionPaidBase !== null) return (paidInfo && paidInfo.warning_sec) || 60;
+  return trialWarningSec();
+}
+
+function limitWarningText(secondsLeft){
+  if(sessionPaidBase === null) return trialWarningText(secondsLeft);
+  const mins = Math.round(secondsLeft / 60);
+  const left = secondsLeft >= 60 ? `${mins} minute${mins === 1 ? '' : 's'}` : 'Less than a minute';
+  const whose = paidInfo && paidInfo.plan === 'team' ? "your team's practice time" : 'practice time';
+  return `${left} of ${whose} left. This session will end automatically, with your debrief.`;
+}
+
+function limitEndText(){
+  if(sessionPaidBase === null) return trialEndText();
+  return (paidInfo && paidInfo.plan === 'team')
+    ? "Your team's minutes for this month are used, so this session has ended. Your debrief is below."
+    : 'Your minutes for this month are used, so this session has ended. Your debrief is below.';
 }
 
 // --- Trial counter + upgrade prompt ---------------------------------------
@@ -1370,13 +1422,29 @@ function setTrialInfo(info){
 // Whole minutes, rounded down, so it never promises time that isn't there.
 function renderTrialPill(elapsedSec){
   const pill = document.getElementById('trialPill');
-  if(!trialInfo){ pill.classList.add('hidden'); updateTrialPillFloat(); return; }
-  let remaining = trialInfo.remaining_sec;
-  if(sessionTrialBaseSec !== null && typeof elapsedSec === 'number'){
-    remaining = Math.max(0, sessionTrialBaseSec - elapsedSec);
+  if(!trialInfo && !paidInfo){ pill.classList.add('hidden'); updateTrialPillFloat(); return; }
+  let mins, text;
+  if(trialInfo){
+    let remaining = trialInfo.remaining_sec;
+    if(sessionTrialBaseSec !== null && typeof elapsedSec === 'number'){
+      remaining = Math.max(0, sessionTrialBaseSec - elapsedSec);
+    }
+    mins = Math.floor(remaining / 60);
+    text = `${mins} of ${Math.round(trialInfo.total_sec / 60)} trial minutes left`;
+  } else {
+    // A paid plan: "84 of 120 minutes left this month", and "+ 100 extra"
+    // when extra minutes have been bought. The month's minutes go first.
+    let included = paidInfo.included_remaining_sec;
+    let extra = paidInfo.topup_sec;
+    if(sessionPaidBase !== null && typeof elapsedSec === 'number'){
+      included = Math.max(0, sessionPaidBase.included - elapsedSec);
+      extra = Math.max(0, sessionPaidBase.topup - Math.max(0, elapsedSec - sessionPaidBase.included));
+    }
+    const extraMin = Math.floor(extra / 60);
+    mins = Math.floor((included + extra) / 60); // everything that can still be used: decides the colour
+    text = `${wholeMinutes(included)} of ${wholeMinutes(paidInfo.included_sec)} ${paidInfo.plan === 'team' ? 'team ' : ''}minutes left this month`
+      + (extraMin > 0 ? ` + ${extraMin.toLocaleString('en-US')} extra` : '');
   }
-  const mins = Math.floor(remaining / 60);
-  const text = `${mins} of ${Math.round(trialInfo.total_sec / 60)} trial minutes left`;
   const float = document.getElementById('trialPillFloat');
   [pill, float].forEach(el => {
     if(el.textContent !== text) el.textContent = text; // this runs every second; only touch the DOM (and screen readers) when the minute changes
@@ -1391,7 +1459,8 @@ function renderTrialPill(elapsedSec){
 // own counter is off screen.
 let trialPillInView = true;
 function updateTrialPillFloat(){
-  const show = !!trialInfo && sessionTrialBaseSec !== null && !trialPillInView;
+  const running = (!!trialInfo && sessionTrialBaseSec !== null) || (!trialInfo && !!paidInfo && sessionPaidBase !== null);
+  const show = running && !trialPillInView;
   document.getElementById('trialPillFloat').classList.toggle('hidden', !show);
 }
 if('IntersectionObserver' in window){
@@ -1414,6 +1483,130 @@ window.closeTrialUpgrade = function(){
   upgradeCardOpen = false;
   setTrialInfo(trialInfo);
 };
+
+// --- Paid minutes: counter, "minutes used" panel, buying more ---------------
+function wholeMinutes(seconds){
+  return Math.floor(seconds / 60).toLocaleString('en-US'); // rounded down, like the trial's: never promises time that isn't there
+}
+
+function paidExhausted(){
+  return !!(paidInfo && paidInfo.exhausted);
+}
+
+// "2026-11-01" (the first day of next month, UTC) as "November 1".
+function resetDayText(iso){
+  const p = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || '');
+  if(!p) return 'the first day of next month';
+  return new Date(Date.UTC(+p[1], +p[2] - 1, +p[3])).toLocaleDateString('en-US', { month: 'long', day: 'numeric', timeZone: 'UTC' });
+}
+
+let minutesCardOpen = false; // opened by hand ("Add minutes") rather than by running out
+
+// The paid twin of setTrialInfo, called in the same places with the
+// server's paid_minutes: redraws the counter, the panel, the menu item and
+// Start.
+function setPaidInfo(info){
+  paidInfo = info || null;
+  renderTrialPill();
+  const out = paidExhausted();
+  if(!paidInfo || !paidInfo.can_buy) minutesCardOpen = false; // nothing to open by hand without something to buy
+  const show = !!paidInfo && (out || minutesCardOpen) && sessionPaidBase === null;
+  document.getElementById('minutesCard').classList.toggle('hidden', !show);
+  document.getElementById('addMinutesBtn').classList.toggle('hidden', !(paidInfo && paidInfo.can_buy));
+  document.getElementById('debriefAddMinutesBtn').classList.toggle('hidden', !(out && paidInfo.can_buy));
+  if(paidInfo){
+    const team = paidInfo.plan === 'team';
+    const total = wholeMinutes(paidInfo.included_sec);
+    const resets = resetDayText(paidInfo.resets_on);
+    const extraMin = Math.floor(paidInfo.topup_sec / 60);
+    document.getElementById('minutesCardEyebrow').textContent = out ? 'Minutes used' : 'Add minutes';
+    document.getElementById('minutesCardTitle').textContent = !out ? 'Add extra minutes'
+      : team ? "Your team has used this month's minutes" : "You've used this month's minutes";
+    const included = team
+      ? `Your plan includes ${total} minutes a month, shared by the team.`
+      : `Your plan includes ${total} minutes a month.`;
+    document.getElementById('minutesCardNote').textContent = out
+      ? `${included} They reset on ${resets}.`
+      : `${team ? 'Your team has' : 'You have'} ${wholeMinutes(paidInfo.included_remaining_sec)} of ${total} ${team ? 'team ' : ''}minutes left this month`
+        + (extraMin > 0 ? `, plus ${extraMin.toLocaleString('en-US')} extra` : '') + `. The month's minutes reset on ${resets}.`;
+    document.getElementById('minutesCardBuyBtn').textContent = `Add ${paidInfo.topup_block_min} minutes for ${paidInfo.topup_price_label}`;
+    document.getElementById('minutesCardActions').classList.toggle('hidden', !paidInfo.can_buy);
+    document.getElementById('minutesCardFine').classList.toggle('hidden', !paidInfo.can_buy);
+    document.getElementById('minutesCardAsk').classList.toggle('hidden', !(paidInfo.is_team_member && paidInfo.topup_available));
+    document.getElementById('minutesCardCloseBtn').classList.toggle('hidden', out); // nothing to go back to once they're used up
+  }
+  updateStartBtn();
+}
+
+window.openAddMinutes = function(){
+  closeProfileMenu();
+  minutesCardOpen = true;
+  document.getElementById('minutesCardError').classList.add('hidden');
+  setPaidInfo(paidInfo);
+  const card = document.getElementById('minutesCard');
+  if(!card.classList.contains('hidden')) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+};
+
+window.closeMinutesCard = function(){
+  minutesCardOpen = false;
+  setPaidInfo(paidInfo);
+};
+
+// One block of extra minutes, paid for on Stripe's own page. Nothing is
+// added here: the server adds the minutes when Stripe confirms the payment,
+// and the page picks that up on the way back (see afterTopupReturn).
+const TOPUP_BEFORE_KEY = 'consultcastai_topup_before';
+window.startTopupCheckout = async function(){
+  const btn = document.getElementById('minutesCardBuyBtn');
+  const errEl = document.getElementById('minutesCardError');
+  errEl.classList.add('hidden');
+  btn.disabled = true;
+  try{
+    const res = await api('/billing/topup-checkout-session', { method: 'POST' });
+    try{ sessionStorage.setItem(TOPUP_BEFORE_KEY, String(paidInfo ? paidInfo.topup_sec : 0)); }catch(_){ /* private mode: the return just can't tell "added" from "already there" */ }
+    location.href = res.checkout_url;
+  }catch(e){
+    errEl.textContent = 'Could not start checkout: ' + errorDetail(e).message;
+    errEl.classList.remove('hidden');
+    btn.disabled = false;
+  }
+};
+
+// Back from Stripe after paying for extra minutes (?payment=topup_success).
+// The minutes are added by Stripe's own message to the server, which can
+// land a few seconds after the browser gets back: look again a few times
+// until the balance has gone up, saying what is happening meanwhile.
+let topupPollTimer = null;
+function afterTopupReturn(){
+  let before = null;
+  try{
+    const raw = sessionStorage.getItem(TOPUP_BEFORE_KEY);
+    sessionStorage.removeItem(TOPUP_BEFORE_KEY);
+    if(raw !== null && raw !== '') before = Number(raw);
+  }catch(_){ /* no storage: fall through with "unknown" */ }
+  const added = () => !!paidInfo && (before === null ? paidInfo.topup_sec > 0 : paidInfo.topup_sec > before);
+  const done = () => {
+    flashBanner = true;
+    showBanner(`Payment received. You now have ${wholeMinutes(paidInfo.topup_sec)} extra minutes.`, true);
+  };
+  if(added()){ done(); return; }
+  flashBanner = true;
+  showBanner('Payment received. Your extra minutes will show here in a few seconds.', true);
+  let tries = 0;
+  clearInterval(topupPollTimer);
+  topupPollTimer = setInterval(async () => {
+    tries += 1;
+    try{
+      const me = await api('/auth/me');
+      setPaidInfo(me.paid_minutes);
+    }catch(_){ /* try again on the next tick */ }
+    if(added()){ clearInterval(topupPollTimer); done(); }
+    else if(tries >= 10){
+      clearInterval(topupPollTimer);
+      showBanner('Payment received. Your extra minutes are taking longer than usual to show. Reload this page in a minute.', true);
+    }
+  }, 3000);
+}
 
 // Profile menu: a trial account upgrades, everyone else gets Stripe's portal.
 window.openPlanMenu = function(){
@@ -2603,6 +2796,14 @@ function onAuthenticated(me){
   // Nothing to log out of in dev bypass (no real session), so no menu either.
   document.getElementById('profileWrap').classList.toggle('hidden', !!me.dev_bypass || !TOKEN);
   setTrialInfo(me.trial); // null unless this is a trial account
+  setPaidInfo(me.paid_minutes); // null unless this is a paid account with the minutes cap on
+  // What each plan includes, on the upgrade panel (absent while the cap is off).
+  const planNote = document.getElementById('planMinutesNote');
+  if(me.plan_minutes){
+    planNote.textContent = `Pro includes ${me.plan_minutes.pro_min.toLocaleString('en-US')} practice minutes a month. `
+      + `Team includes ${me.plan_minutes.team_min.toLocaleString('en-US')} minutes a month, shared by the team.`;
+  }
+  planNote.classList.toggle('hidden', !me.plan_minutes);
   document.getElementById('accountsMenuBtn').classList.toggle('hidden', !me.is_admin);
   document.getElementById('teamMenuBtn').classList.toggle('hidden', !me.is_team_owner);
   // A regular (non-owner) team member never paid anything and has no
@@ -2641,6 +2842,10 @@ function onAuthenticated(me){
   paymentJustSucceeded = false;
   hidePendingScreen();
 
+  if(topupJustPaid){
+    topupJustPaid = false;
+    afterTopupReturn();
+  }
   if(flashBanner) return;
   document.getElementById('resendVerifyBtn').classList.toggle('hidden', !!me.email_verified || !!me.dev_bypass);
   if(me.email_verified) window.dismissBanner();
@@ -2832,7 +3037,7 @@ function updateStartBtn(){
   const s = document.getElementById('scenarioSelect').value;
   // A trial that's out of minutes can't start a session; the server refuses
   // it regardless (auth.require_active_plan), this just says so up front.
-  document.getElementById('startBtn').disabled = !(p && s) || trialExhausted();
+  document.getElementById('startBtn').disabled = !(p && s) || trialExhausted() || paidExhausted();
 }
 
 window.startSession = async function(){
@@ -2927,11 +3132,17 @@ window.startSession = async function(){
     lastActivityAt = Date.now();
     idlePromptShownAt = null;
     hideSessionNotice();
-    // Trial only: the server sets this session's limit and reports what was
-    // left of the trial as it started.
+    // The server sets this session's limit (a trial's, or what a paid
+    // plan's minutes have left) and reports what was left as it started.
     sessionTimeLimitSec = (typeof session.time_limit_sec === 'number') ? session.time_limit_sec : null;
     sessionTrialBaseSec = session.trial ? session.trial.remaining_sec : null;
     setTrialInfo(session.trial);
+    // A paid plan with the minutes cap on: the same two things, from what
+    // was left of the month's minutes and of any extra minutes.
+    sessionPaidBase = session.paid_minutes
+      ? { included: session.paid_minutes.included_remaining_sec, topup: session.paid_minutes.topup_sec }
+      : null;
+    setPaidInfo(session.paid_minutes);
     startTimer();
     setComposerEnabled(true);
     document.getElementById('msgInput').placeholder = hasOpener
@@ -2960,6 +3171,14 @@ window.startSession = async function(){
       // page loaded): refresh the counter and show the upgrade prompt.
       await checkAuth();
       window.showTrialUpgrade();
+    } else if(detail.code === 'minutes_exhausted'){
+      // The plan's minutes are used (possibly by a teammate, or in another
+      // tab, since this page loaded): refresh the counter, which brings up
+      // the "minutes used" panel.
+      await checkAuth();
+      const card = document.getElementById('minutesCard');
+      if(card.classList.contains('hidden')) alert(detail.message);
+      else card.scrollIntoView({ behavior: 'smooth', block: 'start' });
     } else if(detail.code === 'email_unverified'){
       showBanner(detail.message);
       document.getElementById('resendVerifyBtn').classList.remove('hidden');
@@ -3305,12 +3524,13 @@ window.sendTurn = async function(hintText){
   }catch(e){
     hideTypingIndicator();
     const detail = errorDetail(e);
-    if(detail.code === 'trial_session_limit'){
-      // The server's clock reached the limit a moment before this one did:
+    if(detail.code === 'trial_session_limit' || detail.code === 'minutes_session_limit'){
+      // The server's clock reached the limit a moment before this one did
+      // (or, on a team, colleagues used up the shared minutes meanwhile):
       // end the same way the timer would have.
       if(!hardLimitEndTriggered){
         hardLimitEndTriggered = true;
-        showSessionNotice(trialEndText());
+        showSessionNotice(limitEndText());
         window.endSession();
       }
     } else {
@@ -3466,6 +3686,8 @@ window.endSession = async function(){
     const res = await api(`/sessions/${sessionId}/end`, { method: 'POST' });
     sessionTrialBaseSec = null; // the session's over: the counter goes back to the server's figure (and the pinned copy goes away)
     setTrialInfo(res.trial);
+    sessionPaidBase = null;
+    setPaidInfo(res.paid_minutes);
     stopAvatarAndCamera();
     stopListening();
     pausedAt = null; setSessionPaused(false); // don't carry paused state into whatever session comes next
@@ -3498,7 +3720,10 @@ window.restartSession = function(){
   if(!confirm('Restart without generating a debrief? This abandons the current practice session.')) return;
   // No debrief, but the time was still used: stop the server's clock for
   // this session and pick up the updated trial figure.
-  syncServerClock('pause', sessionId).then(res => { if(res && 'trial' in res) setTrialInfo(res.trial); });
+  syncServerClock('pause', sessionId).then(res => {
+    if(res && 'trial' in res) setTrialInfo(res.trial);
+    if(res && 'paid_minutes' in res) setPaidInfo(res.paid_minutes);
+  });
   stopTimer();
   stopAvatarAndCamera();
   document.getElementById('centerActive').classList.add('hidden');
@@ -3517,6 +3742,7 @@ window.resetAll = function(){
   idlePromptShownAt = null;
   sessionTimeLimitSec = null;
   sessionTrialBaseSec = null;
+  sessionPaidBase = null;
   hideSessionNotice();
   stopTimer();
   resetTimerDisplay();
@@ -3549,6 +3775,7 @@ window.resetAll = function(){
   setMicBusy(false); // safety: never leave the mic stuck disabled between sessions
   setComposerEnabled(false); // called after setMicBusy so this wins: no session, composer off
   setTrialInfo(trialInfo); // back on the start screen: counter, upgrade prompt and Start all redrawn from the current figure
+  setPaidInfo(paidInfo);
 };
 
 // ---------------------------------------------------------------------
@@ -3633,10 +3860,12 @@ window.toggleVideo = async function(){
 // part of this redirect, so "success" here means "Stripe took the payment",
 // not "you're approved yet" — checkAuth() below picks up the real state.
 let paymentJustSucceeded = false;
+let topupJustPaid = false; // ?payment=topup_success: back from paying for extra minutes (see afterTopupReturn)
 function handlePaymentParam(){
   const p = new URLSearchParams(location.search).get('payment');
   if(!p) return;
   if(p === 'success') paymentJustSucceeded = true;
+  if(p === 'topup_success') topupJustPaid = true;
   stripQueryParam('payment');
 }
 
