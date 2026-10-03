@@ -103,6 +103,8 @@ def _connect():
     if _LOCAL:
         conn = sqlite3.connect(_LOCAL_PATH, timeout=10)
         conn.row_factory = sqlite3.Row
+        # Same file as users.py, same reason: see the note there.
+        conn.execute("PRAGMA secure_delete = ON")
         return conn
     if not _DATABASE_URL:
         raise RuntimeError("CONSULTCASTAI_LOCAL_USERS=0 but DATABASE_URL is not set")

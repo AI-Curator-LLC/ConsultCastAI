@@ -67,12 +67,24 @@ def is_trial(account: users.User | None) -> bool:
     return account.subscription_status is None and not account.stripe_subscription_id
 
 
+def trial_already_used(account: users.User) -> bool:
+    """True if this email had its trial on an earlier account (see
+    users.record_trial_used): a record exists and it isn't this account's
+    own. The account that used the trial keeps counting against its own
+    ledger as normal; only a later account on the same email is affected."""
+    record = users.get_trial_record(account.email)
+    return record is not None and record.user_id != account.id
+
+
 def trial_status(account: users.User | None) -> dict | None:
     """What the frontend needs to show the counter and the upgrade prompt,
     or None for a non-trial account."""
     if not is_trial(account):
         return None
-    used = min(TRIAL_TOTAL_SEC, store.get_total_seconds(account.id))
+    previously_used = trial_already_used(account)
+    # A trial is per email. An account on an email that has already had one
+    # starts with none left, however much of it the earlier account used.
+    used = TRIAL_TOTAL_SEC if previously_used else min(TRIAL_TOTAL_SEC, store.get_total_seconds(account.id))
     remaining = TRIAL_TOTAL_SEC - used
     return {
         "total_sec": TRIAL_TOTAL_SEC,
@@ -81,6 +93,7 @@ def trial_status(account: users.User | None) -> dict | None:
         "session_limit_sec": TRIAL_SESSION_SEC,
         "warning_sec": TRIAL_WARNING_SEC,
         "exhausted": remaining < TRIAL_MIN_START_SEC,
+        "previously_used": previously_used,
     }
 
 
@@ -187,4 +200,8 @@ def settle(session, account: users.User | None, now: datetime) -> None:
         store.add_seconds(account.id, month, delta)        # per user
         if account.team_id:
             store.add_seconds(account.team_id, month, delta)  # per account, pooled across the team
+        # First time this session is charged anything: if it's a trial, the
+        # email has now used one. Kept past account deletion, see users.py.
+        if int(session.charged_sec or 0) == 0 and is_trial(account):
+            users.record_trial_used(account)
     session.charged_sec = billable

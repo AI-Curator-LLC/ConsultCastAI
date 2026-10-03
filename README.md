@@ -269,7 +269,7 @@ stored sessions.
 | Sessions with no debrief (abandoned) | Whole record deleted at `TRANSCRIPT_RETENTION_DAYS`, nothing worth keeping |
 | After cancellation | Kept `POST_CANCEL_GRACE_DAYS` (90) past `current_period_end`, then that user's (or team member's) sessions are deleted |
 | User deletes a session, or all sessions | Deleted immediately |
-| User deletes their account | Account, sessions, and usage records deleted immediately |
+| User deletes their account | Account, sessions, and usage records deleted immediately. One thing is kept: if the account used any trial time, a keyed hash of its email, so the same address can't get a second trial (see "Trial and minutes tracking") |
 | Billing records | Stripe holds them — we keep only customer id, status, and dates |
 
 All three periods are env vars (`retention.py`), defaulted to the values
@@ -328,7 +328,9 @@ screen itself gets a lightweight "Account settings" link straight to it):
   owner checks the team's (a regular member is always allowed to leave,
   which just frees their seat — they were never the one being billed). The
   Stripe customer record itself is never deleted; Stripe keeps billing
-  history for tax purposes independent of this account existing.
+  history for tax purposes independent of this account existing. The
+  `trial_records` row for the email, if there is one, is kept too, with its
+  link to the account removed.
 
 Frontend: Debrief History gets a Download button (writes the debrief to a
 `.txt` file client-side, no extra endpoint) and a Delete button per
@@ -416,10 +418,38 @@ Session duration (`duration_sec`) now comes from the same persisted clock
 rather than an in-memory start time, so a restart or redeploy mid-session
 no longer zeroes it.
 
-Known limits, deliberately left: deleting an account and signing up again
-gets a fresh trial (each new account still needs approval); two sessions
-started at the same moment in two tabs each get their own limit; and time
-between the last exchange and closing the tab without ending isn't charged.
+**One trial per email.** The first time a trial account is charged any
+session time, `users.record_trial_used` writes a row to `trial_records`: a
+keyed hash (HMAC-SHA256) of the normalized email, the account id, and the
+date. Never the email itself. Deleting the account keeps the row and nulls
+its account id, so what survives is a hash and a date. A new account whose
+email hashes to an existing row that isn't its own starts with no trial
+minutes (`trial_status` reports `previously_used`), sees the upgrade
+prompt, and can still subscribe. The account that used the trial is
+unaffected and keeps counting against its own ledger. An account that
+never practiced leaves no row, so deleting it and signing up again still
+gets a trial. `/me/export` includes `trial_record_created_at`.
+
+The hash is keyed so the table can't be checked against a list of guessed
+addresses without the key. The key is `CONSULTCASTAI_TRIAL_HASH_KEY` if
+set, otherwise `CONSULTCASTAI_JWT_SECRET`. **Whichever it is has to stay
+the same**: change it (including rotating the JWT secret while no separate
+key is set) and existing rows stop matching, so those emails would get a
+trial again. To rotate the JWT secret safely, first set
+`CONSULTCASTAI_TRIAL_HASH_KEY` to the current JWT secret's value.
+
+SQLite connections run with `secure_delete` on, so a deleted account's row
+is zeroed in the file rather than left readable in freed pages. That only
+applies to deletions from here on; rows deleted before it was turned on
+stay in the file until the space is reused or the database is vacuumed.
+
+To give a trial back to an email by hand, delete its `trial_records` row.
+
+Known limits, deliberately left: a different address (including a `+tag`
+alias of the same inbox) is a different email and gets its own trial, each
+still needing approval; two sessions started at the same moment in two tabs
+each get their own limit; and time between the last exchange and closing
+the tab without ending isn't charged.
 
 ## Voice, current state
 

@@ -180,10 +180,12 @@ def require_active_plan(user: AuthUser = Depends(require_approved)) -> AuthUser:
     elif minutes.is_trial(account):
         status = minutes.trial_status(account)
         if status["exhausted"]:
-            raise HTTPException(status_code=402, detail={
-                "code": "trial_exhausted",
-                "message": f"You've used your {minutes.TRIAL_TOTAL_SEC // 60} trial minutes. Upgrade to Pro to keep practicing.",
-            })
+            message = (
+                "This email has already used its free trial. Upgrade to Pro to keep practicing."
+                if status["previously_used"] else
+                f"You've used your {minutes.TRIAL_TOTAL_SEC // 60} trial minutes. Upgrade to Pro to keep practicing."
+            )
+            raise HTTPException(status_code=402, detail={"code": "trial_exhausted", "message": message})
         return user  # the trial is capped on minutes, not on a monthly session count
     else:
         raise HTTPException(status_code=402, detail="Your subscription isn't active. Please subscribe or update your billing.")

@@ -1305,8 +1305,11 @@ function setTrialInfo(info){
   document.getElementById('trialUpgradeCard').classList.toggle('hidden', !out || sessionTrialBaseSec !== null);
   document.getElementById('debriefUpgradeBtn').classList.toggle('hidden', !out);
   if(trialInfo){
-    document.getElementById('trialUpgradeTitle').textContent =
-      `You've used your ${Math.round(trialInfo.total_sec / 60)} trial minutes`;
+    // previously_used: the trial went on an earlier account with this same
+    // email (trials are per email), so this one never had minutes to use.
+    document.getElementById('trialUpgradeTitle').textContent = trialInfo.previously_used
+      ? 'This email has already used its free trial'
+      : `You've used your ${Math.round(trialInfo.total_sec / 60)} trial minutes`;
   }
   updateStartBtn();
 }

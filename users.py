@@ -20,6 +20,7 @@ needs to know which backend is live.
 """
 
 import hashlib
+import hmac
 import os
 import re
 import secrets
@@ -237,6 +238,18 @@ _ADDED_COLUMNS = [
     ("team_id", "TEXT"),
 ]
 
+# Which emails have already had a trial (see the "trial records" section
+# below). Deliberately its own table rather than a column on users: it has
+# to outlive the users row. No email in it, only a keyed hash of one. Same
+# DDL for SQLite and Postgres.
+_TRIAL_RECORDS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS trial_records (
+    email_hash TEXT PRIMARY KEY,
+    user_id TEXT,
+    created_at TEXT NOT NULL
+)
+"""
+
 _schema_ready = False
 _schema_lock = threading.Lock()
 
@@ -245,6 +258,12 @@ def _connect():
     if _LOCAL:
         conn = sqlite3.connect(_LOCAL_PATH, timeout=10)
         conn.row_factory = sqlite3.Row
+        # Overwrite deleted content with zeros instead of just marking the
+        # space free. Without this a deleted account's row (its email
+        # included) stays readable in the file until something happens to
+        # reuse that page, which defeats both account deletion and keeping
+        # only a hash of the email in trial_records.
+        conn.execute("PRAGMA secure_delete = ON")
         return conn
     if not _DATABASE_URL:
         raise RuntimeError("CONSULTCASTAI_LOCAL_USERS=0 but DATABASE_URL is not set")
@@ -269,6 +288,7 @@ def _ensure_schema() -> None:
         try:
             cur = conn.cursor()
             cur.execute(_SQLITE_SCHEMA if _LOCAL else _POSTGRES_SCHEMA)
+            cur.execute(_TRIAL_RECORDS_SCHEMA)
             if _LOCAL:
                 cur.execute("PRAGMA table_info(users)")
                 existing = {row["name"] for row in cur.fetchall()}
@@ -589,3 +609,59 @@ def delete_user(user_id: str) -> None:
     is what frees their seat (teams.py's seat count is a live COUNT(*) over
     this table, not a separate counter to decrement)."""
     _run("DELETE FROM users WHERE id = ?", (user_id,))
+
+
+# --- trial records ---------------------------------------------------------
+# A trial is per email, not per account: without this, deleting an account
+# and signing up again with the same address would hand out a fresh one.
+# The record is written the first time a trial account is charged any
+# session time (minutes.settle) and is kept when the account is deleted.
+#
+# What's stored is a keyed hash (HMAC-SHA256) of the normalized email, never
+# the email. Keyed rather than a bare SHA-256 because email addresses are
+# guessable: a plain hash of one can be checked against a list of candidates
+# by anyone holding the table, a keyed one can't without the key, which
+# lives in the environment and not in the database.
+#
+# The key is CONSULTCASTAI_TRIAL_HASH_KEY if set, otherwise the JWT secret.
+# Whichever it is has to stay the same: a hash made under one key doesn't
+# match the same email under another, so changing it makes every existing
+# record stop matching (those emails would get a trial again).
+
+_TRIAL_HASH_KEY_ENV = "CONSULTCASTAI_TRIAL_HASH_KEY"
+
+
+@dataclass
+class TrialRecord:
+    email_hash: str
+    user_id: str | None  # the account that used the trial; NULL once that account is deleted
+    created_at: str
+
+
+def trial_email_hash(email: str) -> str:
+    key = os.environ.get(_TRIAL_HASH_KEY_ENV, "").strip() or _jwt_secret()
+    return hmac.new(key.encode(), normalize_email(email).encode(), hashlib.sha256).hexdigest()
+
+
+def record_trial_used(user: User) -> None:
+    """Notes that this email has had a trial. A no-op if it's already
+    recorded, so the first account to use a trial on an email stays the one
+    the record points at."""
+    _run(
+        "INSERT INTO trial_records (email_hash, user_id, created_at) VALUES (?, ?, ?) "
+        "ON CONFLICT (email_hash) DO NOTHING",
+        (trial_email_hash(user.email), user.id, datetime.now(timezone.utc).isoformat()),
+    )
+
+
+def get_trial_record(email: str) -> TrialRecord | None:
+    row = _run("SELECT * FROM trial_records WHERE email_hash = ?", (trial_email_hash(email),), fetch_one=True)
+    if row is None:
+        return None
+    return TrialRecord(email_hash=row["email_hash"], user_id=row["user_id"], created_at=str(row["created_at"]))
+
+
+def detach_trial_record(user_id: str) -> None:
+    """Account deletion: the record stays, its link to the account doesn't.
+    What's left is the hash and a date."""
+    _run("UPDATE trial_records SET user_id = NULL WHERE user_id = ?", (user_id,))

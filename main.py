@@ -82,7 +82,8 @@ print(
 # Bump this string any time prompts.py changes and you need
 # to confirm a restart actually picked up the new files, rather than
 # guessing. Check the uvicorn startup log for this exact line.
-print("[consultcastai] BUILD MARKER: stripe-billing-v1")
+BUILD_MARKER = "trial-email-record-v1"
+print(f"[consultcastai] BUILD MARKER: {BUILD_MARKER}")
 
 # Never prints the key itself, just whether one's configured and which
 # sender it'll use, so "is verification email even set up?" is answerable
@@ -377,6 +378,13 @@ def change_password(req: ChangePasswordRequest, user: auth.AuthUser = Depends(au
         raise HTTPException(400, problem)
     users.update_password_hash(user.rep_id, users.hash_password(req.new_password))
     return {"message": "Password changed"}
+
+
+@app.get("/version")
+def version():
+    """Which build is running, so "has the deploy landed?" can be answered
+    from outside without reading the server log. Nothing but the marker."""
+    return {"build": BUILD_MARKER}
 
 
 @app.get("/personas")
@@ -953,12 +961,17 @@ def export_my_data(user: auth.AuthUser = Depends(auth.verify_user)):
             "current_period_end": account.current_period_end, "team_id": account.team_id,
         }
 
+    # Whether a "this email has had a trial" record exists (kept as a hash,
+    # and kept after account deletion), and when it was made.
+    trial_record = users.get_trial_record(account.email) if account else None
+
     return {
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "profile": profile,
         "plan": plan,
         "practice_seconds_total": store.get_total_seconds(user.rep_id),
         "trial": minutes.trial_status(account),
+        "trial_record_created_at": trial_record.created_at if trial_record else None,
         "sessions": [_session_dict(s) for s in sessions],
     }
 
@@ -993,6 +1006,15 @@ def delete_account(req: DeleteAccountRequest, user: auth.AuthUser = Depends(auth
             raise HTTPException(400, "Cancel your team's subscription first via Manage subscription, then you can delete your account")
     elif users.subscription_active(account):
         raise HTTPException(400, "Cancel your subscription first via Manage subscription, then you can delete your account")
+
+    # A trial is per email: before the ledger goes, make sure the fact that
+    # this email used one is on record (it normally already is, from the
+    # first charge; this covers trial time used before that record existed),
+    # then cut the record's link to the account. What survives the deletion
+    # is a keyed hash of the email and a date, see users.record_trial_used.
+    if minutes.is_trial(account) and store.get_total_seconds(account.id) > 0:
+        users.record_trial_used(account)
+    users.detach_trial_record(account.id)
 
     store.delete_for_rep(account.id)
     store.delete_usage_records_for_rep(account.id)
