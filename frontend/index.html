@@ -808,7 +808,7 @@
            mode can be picked before pressing Start. The session-only buttons
            stay disabled/hidden until a session exists (setComposerEnabled). -->
       <div class="control-bar" id="controlBar">
-        <button class="ctl ctl-gradient btn-uniform" id="muteBtn" onclick="toggleMute()" disabled title="Turn the auto-mic off or on">
+        <button class="ctl ctl-gradient btn-uniform" id="muteBtn" onclick="toggleMute()" disabled title="Mute or unmute your microphone">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
           <span id="muteLabel">Mute</span>
         </button>
@@ -1753,7 +1753,15 @@ let turnCount = 0;
 let anamClient = null;
 let anamActive = false;
 let avatarStarting = false;
-let resolveAvatarSpeechEnd = null; // set by speakPersonaLine(), resolved by the MESSAGE_HISTORY_UPDATED listener in startAvatar()
+
+// --- Hands-free avatar turns (see runAvatarTurn) ---
+// In an avatar session Anam holds the microphone for the whole session and
+// transcribes the consultant; this app decides what the persona says back.
+let anamSeenUserMessages = new Set(); // Anam re-sends the whole history on every update: the ids already acted on
+let activeTurn = null;                // the turn whose reply is being fetched right now, if any
+let lastTurn = null;                  // the latest turn, kept after its reply is fetched: the avatar may still be saying it
+let spokenByCorrelation = {};         // Anam's own account of what the persona has said so far, per reply
+let micDenied = false;                // the browser refused the microphone: typing still works
 
 // --- Voice, fixed per persona, no user-facing selector ---
 // Each entry can name an exact Edge-only "Online (Natural)" voice (chosen by
@@ -1873,20 +1881,25 @@ async function api(path, opts={}){
   const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
   if(TOKEN) headers['Authorization'] = 'Bearer ' + TOKEN;
   const res = await fetch(API_BASE + path, { ...opts, headers });
-  if(!res.ok){
-    const body = await res.text().catch(()=> '');
-    if(res.status === 401) handleUnauthorized();
-    // require_approved's two 403s each get their own full-page screen
-    // instead of whatever generic error the caller would otherwise show (a
-    // stray alert() over a page that's about to be covered anyway). Other
-    // 403s (require_owner, require_admin) are just "not allowed".
-    if(res.status === 403 && body.includes('"verification_required"')) showPendingScreen();
-    if(res.status === 403 && body.includes('"account_suspended"')) showSuspendedScreen();
-    const err = new Error(`${res.status}: ${body}`);
-    err.status = res.status;
-    throw err;
-  }
+  if(!res.ok) throw await failedResponse(res);
   return res.json();
+}
+
+// What api() does with a response that isn't ok, as its own function so a
+// request that can't go through api() (the streamed avatar turn, which
+// reads its body as it arrives) fails in exactly the same way.
+async function failedResponse(res){
+  const body = await res.text().catch(()=> '');
+  if(res.status === 401) handleUnauthorized();
+  // require_approved's two 403s each get their own full-page screen
+  // instead of whatever generic error the caller would otherwise show (a
+  // stray alert() over a page that's about to be covered anyway). Other
+  // 403s (require_owner, require_admin) are just "not allowed".
+  if(res.status === 403 && body.includes('"verification_required"')) showPendingScreen();
+  if(res.status === 403 && body.includes('"account_suspended"')) showSuspendedScreen();
+  const err = new Error(`${res.status}: ${body}`);
+  err.status = res.status;
+  return err;
 }
 
 // --- Login / signup ---
@@ -3211,17 +3224,22 @@ window.startSession = async function(){
     setPaidInfo(session.paid_minutes);
     startTimer();
     setComposerEnabled(true);
-    document.getElementById('msgInput').placeholder = hasOpener
-      ? 'Type your response, or use the mic...'
-      : 'You called them. Type your opening line, or use the mic...';
-    if(!hasOpener){
-      startListening(); // outbound: you speak first, nothing to wait on before it's your turn
-    }
 
     // No output picker in the UI: avatar if this persona has one configured,
     // voice otherwise. (Text-only dropped along with the picker — nothing
     // else in the app used it as a distinct path worth keeping a control for.)
     await applyOutputMode();
+    // Set once the mode is known. An avatar session is hands-free: Anam is
+    // already listening, so the browser's own speech recognition (which
+    // only fills the text box) stays off and would otherwise compete for
+    // the same microphone.
+    const handsFreeNow = outputMode === 'avatar' && anamActive;
+    document.getElementById('msgInput').placeholder = handsFreeNow
+      ? (hasOpener ? 'Just talk. Or type here and press Send.' : 'You called them: just start talking. Or type here and press Send.')
+      : (hasOpener ? 'Type your response, or use the mic...' : 'You called them. Type your opening line, or use the mic...');
+    if(!hasOpener){
+      startListening(); // outbound, voice mode: you speak first, nothing to wait on before it's your turn (a no-op in avatar mode)
+    }
 
     // Speak the opening line too, not just the reply to the first turn —
     // 1.5s pause gives it a natural beat and, in avatar mode, a moment for
@@ -3293,25 +3311,35 @@ async function startAvatar(){
       video.autoplay = true; video.playsInline = true;
       box.appendChild(video);
     }
-    anamClient = createClient(res.session_token);
-    // Must be registered before streamToVideoElement() per Anam's docs.
-    // talk()'s own returned promise resolves once the request is accepted,
-    // NOT once the avatar has actually finished speaking out loud, awaiting
-    // it alone was re-enabling the mic mid-speech, which then picked up the
-    // avatar's own voice through the speakers. MESSAGE_HISTORY_UPDATED
-    // fires when a participant actually finishes speaking, so that's what
-    // resolveAvatarSpeechEnd (used in speakPersonaLine) waits on instead.
-    anamClient.addListener(AnamEvent.MESSAGE_HISTORY_UPDATED, (messages) => {
-      const last = messages[messages.length - 1];
-      if(last && last.role === 'persona' && resolveAvatarSpeechEnd){
-        const resolve = resolveAvatarSpeechEnd;
-        resolveAvatarSpeechEnd = null;
-        resolve();
-      }
-    });
-    await anamClient.streamToVideoElement('avatarVideo');
+    // personaConfig (set server-side, see anam_client.py) has
+    // llmId "CUSTOMER_CLIENT_V1": Anam runs the microphone, the speech
+    // recognition, the voice and the face, and leaves what the persona says
+    // to this app. Input audio is on by default, so the microphone is live
+    // for as long as this connection is.
+    const client = createClient(res.session_token);
+    anamClient = client;
+    anamSeenUserMessages = new Set();
+    micDenied = false;
+    // All registered before streamToVideoElement(), per Anam's docs. Each
+    // handler checks it's still about the current connection: a pause and
+    // resume makes a new one, and the old one's late events mean nothing.
+    client.addListener(AnamEvent.MESSAGE_HISTORY_UPDATED, messages => { if(client === anamClient) onAnamHistory(messages); });
+    client.addListener(AnamEvent.MESSAGE_STREAM_EVENT_RECEIVED, evt => { if(client === anamClient) onAnamStreamEvent(evt); });
+    client.addListener(AnamEvent.TALK_STREAM_INTERRUPTED, correlationId => { if(client === anamClient) onAnamInterrupted(correlationId); });
+    client.addListener(AnamEvent.USER_SPEECH_STARTED, () => { if(client === anamClient) dismissIdlePrompt(); });
+    client.addListener(AnamEvent.MIC_PERMISSION_DENIED, () => { if(client === anamClient) onMicDenied(); });
+    client.addListener(AnamEvent.CONNECTION_CLOSED, (reason, details) => { if(client === anamClient) onAnamClosed(reason, details); });
+    await client.streamToVideoElement('avatarVideo');
+    if(anamClient !== client){
+      // Paused or ended while it was still connecting: don't leave a live
+      // (billed, listening) connection behind that nothing refers to.
+      Promise.resolve().then(() => client.stopStreaming()).catch(e => console.warn(e));
+      return;
+    }
     anamActive = true;
+    if(micMuted) client.muteInputAudio(); // Mute carries across a pause and resume
     box.classList.add('streaming');
+    syncMicUi();
     startSelfCamera(); // purely cosmetic (see below), never blocks the avatar itself
   }catch(e){
     console.error('Avatar start failed:', e);
@@ -3331,15 +3359,17 @@ async function startAvatar(){
 // really do want a full teardown (ending/restarting the session, closing
 // the tab) call stopSelfCamera() themselves right alongside this.
 function stopAvatar(){
-  if(anamClient && anamActive){
-    try{ anamClient.stopStreaming(); }catch(e){ console.warn(e); }
-  }
+  const client = anamClient;
+  // Let go of it BEFORE stopping it: stopStreaming() makes Anam report the
+  // connection closed, and that handler must find this was deliberate.
   anamActive = false;
   anamClient = null;
-  if(resolveAvatarSpeechEnd){
-    resolveAvatarSpeechEnd(); // don't leave speakPersonaLine() hanging if the avatar was stopped mid-speech
-    resolveAvatarSpeechEnd = null;
+  if(client){
+    // Closes the connection and releases the microphone. It's a promise,
+    // and stopping one that never finished connecting may reject.
+    Promise.resolve().then(() => client.stopStreaming()).catch(e => console.warn(e));
   }
+  syncMicUi();
   const box = document.getElementById('avatarLive');
   box.classList.remove('streaming');
   const video = box.querySelector('video');
@@ -3454,6 +3484,18 @@ function appendMsg(role, who, text){
   div.innerHTML = msgHtml(role, who, escapeHtml(text));
   chat.appendChild(div);
   chat.scrollTop = chat.scrollHeight;
+  return div;
+}
+
+// Replaces a message's text in place (a reply that's still arriving, or
+// one cut back to what was actually said). Everything after the name line
+// is the text.
+function setMsgText(div, text){
+  const main = div.querySelector('.msg-main');
+  while(main.lastChild && !(main.lastChild.classList && main.lastChild.classList.contains('who'))) main.removeChild(main.lastChild);
+  main.appendChild(document.createTextNode(text));
+  const chat = document.getElementById('chat');
+  chat.scrollTop = chat.scrollHeight;
 }
 
 function escapeHtml(s){
@@ -3506,6 +3548,241 @@ function addCoachEntry(kind, text, unnumbered){
   feed.scrollTop = feed.scrollHeight;
 }
 
+// ---------------------------------------------------------------------
+// Hands-free avatar turns
+// ---------------------------------------------------------------------
+// Anam tells us when the consultant has finished speaking (and what they
+// said); the server asks Claude, with the same persona prompt and history
+// as a typed turn; the reply is streamed into the avatar as it's written,
+// so it starts talking after the first few words rather than after the
+// whole reply. Typing and pressing Send goes through exactly the same path.
+
+function handsFree(){
+  return outputMode === 'avatar' && anamActive && !!anamClient;
+}
+
+function newTurnId(){
+  return (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+// MESSAGE_HISTORY_UPDATED: fires each time someone finishes speaking, with
+// the whole conversation as Anam heard it. A user message we haven't acted
+// on yet is the consultant's next turn.
+function onAnamHistory(messages){
+  const fresh = messages.filter(m => m.role === 'user' && !anamSeenUserMessages.has(m.id));
+  if(!fresh.length) return;
+  fresh.forEach(m => anamSeenUserMessages.add(m.id));
+  const text = fresh.map(m => (m.content || '').trim()).filter(Boolean).join(' ');
+  if(!text || !sessionId || sessionPaused) return;
+  runAvatarTurn(text);
+}
+
+// Anam's running transcript of the persona's speech. Kept per reply so that,
+// if the consultant talks over it, we know how far it got.
+function onAnamStreamEvent(evt){
+  if(evt.role !== 'persona') return;
+  const id = evt.correlationId || (lastTurn && lastTurn.correlationId);
+  if(!id) return;
+  spokenByCorrelation[id] = (spokenByCorrelation[id] || '') + (evt.content || '');
+  if(lastTurn && lastTurn.correlationId === id){
+    if(evt.interrupted) lastTurn.interrupted = true;
+    else if(evt.endOfSpeech) lastTurn.fullySpoken = true;
+  }
+}
+
+// The consultant spoke while the persona was talking. Anam has already
+// stopped the avatar; stop fetching a reply nobody will hear, and show the
+// reply as far as it actually got.
+function onAnamInterrupted(correlationId){
+  const turn = [activeTurn, lastTurn].find(t => t && t.correlationId === correlationId);
+  if(!turn) return;
+  turn.interrupted = true;
+  if(activeTurn === turn) dropActiveTurn();
+  setTimeout(() => showAsCutOff(turn), 400); // the transcript of the last words can trail the interruption slightly
+}
+
+function showAsCutOff(turn){
+  const said = (spokenByCorrelation[turn.correlationId] || '').trim();
+  if(turn.bubble && said && said.length < turn.text.trim().length) setMsgText(turn.bubble, said + '...');
+}
+
+function dropActiveTurn(){
+  if(!activeTurn) return;
+  activeTurn.controller.abort(); // the server stops Claude when this connection closes
+  activeTurn = null;
+  hideTypingIndicator();
+}
+
+// Whatever was in progress is over: the consultant has started a new turn,
+// paused, or ended. stopSpeech is for the cases where Anam hasn't already
+// silenced the avatar itself (a typed message sent while it's talking).
+function cutOffCurrentReply(stopSpeech){
+  dropActiveTurn();
+  const t = lastTurn;
+  if(!t || !t.sentAny || t.fullySpoken || t.interrupted) return;
+  t.interrupted = true; // it was (as far as we know) still being spoken
+  if(stopSpeech && handsFree()){
+    try{ anamClient.interruptPersona(); }catch(e){ console.warn('Could not interrupt the avatar:', e); }
+  }
+  showAsCutOff(t);
+}
+
+// What to tell the server about the previous reply, once, with the next
+// turn: how much of it the avatar actually said. The server cuts its record
+// back to match, so the persona doesn't carry on as if it had finished.
+// null = nothing to report (it was said to the end, or we can't tell).
+function spokenReport(){
+  const t = lastTurn;
+  if(!t || t.reported) return null;
+  t.reported = true;
+  if(t.fullySpoken) return null;
+  if(!t.sentAny) return { turn: t.id, text: '' }; // never reached the avatar: the consultant simply kept talking
+  if(!t.interrupted) return null;
+  const said = (spokenByCorrelation[t.correlationId] || '').trim();
+  return said ? { turn: t.id, text: said } : null; // interrupted but no transcript of it: leave the record alone rather than guess
+}
+
+async function runAvatarTurn(text){
+  cutOffCurrentReply(true);
+  const report = spokenReport();
+  dismissIdlePrompt(); // the consultant just said something: resets the idle clock
+  appendMsg('user', 'You', text);
+
+  const turn = { id: newTurnId(), controller: new AbortController(), text: '', bubble: null,
+                 talkStream: null, correlationId: null, sentAny: false,
+                 interrupted: false, fullySpoken: false, reported: false };
+  activeTurn = turn;
+  lastTurn = turn;
+  showTypingIndicator(currentPersona.name);
+  try{
+    await serverClockQueue; // a resume still on its way has to land first, or the server would refuse this turn as paused
+    if(activeTurn !== turn) return;
+    const headers = { 'Content-Type': 'application/json' };
+    if(TOKEN) headers['Authorization'] = 'Bearer ' + TOKEN;
+    const body = { message: text, turn_id: turn.id };
+    if(report){ body.spoken_reply = report.text; body.spoken_reply_turn = report.turn; }
+    const res = await fetch(API_BASE + `/sessions/${sessionId}/turn/stream`, {
+      method: 'POST', headers, body: JSON.stringify(body), signal: turn.controller.signal,
+    });
+    if(!res.ok) throw await failedResponse(res);
+    await readTurnStream(res, turn);
+  }catch(e){
+    if(activeTurn !== turn || e.name === 'AbortError') return; // cut off on purpose, not a failure
+    hideTypingIndicator();
+    handleTurnError(e);
+  }finally{
+    if(activeTurn === turn){ activeTurn = null; hideTypingIndicator(); }
+  }
+}
+
+// The reply as Server-Sent Events: "data: {json}" blocks separated by a
+// blank line (see /sessions/{id}/turn/stream in main.py).
+async function readTurnStream(res, turn){
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  for(;;){
+    const { done, value } = await reader.read();
+    if(done) return;
+    buffer += decoder.decode(value, { stream: true });
+    let end;
+    while((end = buffer.indexOf('\n\n')) !== -1){
+      const line = buffer.slice(0, end).split('\n').find(l => l.startsWith('data:'));
+      buffer = buffer.slice(end + 2);
+      if(!line) continue;
+      let event;
+      try{ event = JSON.parse(line.slice(5)); }catch(_){ continue; }
+      if(activeTurn !== turn) return; // cut off while this piece was on its way
+      if(event.type === 'chunk') onReplyPiece(turn, event.text);
+      else if(event.type === 'done') onReplyDone(turn, event);
+      else if(event.type === 'error') throw new Error('502: ' + JSON.stringify({ detail: event.message }));
+    }
+  }
+}
+
+function onReplyPiece(turn, piece){
+  turn.text += piece;
+  if(!turn.bubble){
+    hideTypingIndicator();
+    turn.bubble = appendMsg('assistant', currentPersona.name, '');
+  }
+  setMsgText(turn.bubble, turn.text);
+  if(!handsFree() || turn.interrupted) return; // no avatar to say it (it dropped mid-reply): the text is still on screen
+  try{
+    if(!turn.talkStream){
+      turn.talkStream = anamClient.createTalkMessageStream();
+      turn.correlationId = turn.talkStream.getCorrelationId();
+    }
+    if(turn.talkStream.isActive()){
+      turn.sentAny = true;
+      turn.talkStream.streamMessageChunk(piece, false).catch(e => console.warn('Avatar speech failed:', e));
+    }
+  }catch(e){
+    console.warn('Avatar speech failed:', e);
+  }
+}
+
+function onReplyDone(turn, result){
+  turn.text = result.persona_reply;
+  if(!turn.bubble) turn.bubble = appendMsg('assistant', currentPersona.name, '');
+  setMsgText(turn.bubble, turn.text);
+  if(turn.talkStream && turn.talkStream.isActive()){
+    turn.talkStream.endMessage().catch(e => console.warn('Avatar speech failed:', e)); // nothing more to say in this reply
+  }
+  updateMeters(result.pressure, result.trust, result.specificity);
+  addCoachEntry(result.coaching_note_kind, result.coaching_note_text);
+}
+
+// A turn the server refused or couldn't complete, typed or spoken.
+function handleTurnError(e){
+  const detail = errorDetail(e);
+  if(detail.code === 'trial_session_limit' || detail.code === 'minutes_session_limit'){
+    // The server's clock reached the limit a moment before this one did
+    // (or, on a team, colleagues used up the shared minutes meanwhile):
+    // end the same way the timer would have.
+    if(!hardLimitEndTriggered){
+      hardLimitEndTriggered = true;
+      showSessionNotice(limitEndText());
+      window.endSession();
+    }
+  } else if(handsFree()){
+    // Nobody pressed anything, so an alert box would come out of nowhere
+    // mid-conversation. Say it where the other session messages go.
+    showSessionNotice('That reply did not come through: ' + detail.message + ' Say it again, or type it and press Send.');
+  } else {
+    alert('Turn failed: ' + detail.message);
+  }
+}
+
+// The microphone, as the mic button shows it in an avatar session: live
+// while Anam is listening, off while muted, paused or refused.
+function syncMicUi(){
+  const btn = document.getElementById('micBtn');
+  if(outputMode !== 'avatar') return; // voice mode drives the button itself (startListening)
+  const listening = handsFree() && !micMuted && !micDenied && !sessionPaused;
+  btn.classList.toggle('live', listening);
+  btn.title = sessionPaused ? 'Paused'
+    : micDenied ? 'Microphone not available. Type your responses.'
+    : micMuted ? 'Muted. Click to unmute.'
+    : 'Listening. Click to mute.';
+}
+
+function onMicDenied(){
+  micDenied = true;
+  syncMicUi();
+  showSessionNotice("Your microphone isn't available, so the persona can't hear you. Type your responses and press Send. To talk instead, allow the microphone for this site, then press Pause and Resume.");
+}
+
+// Anam closed the connection (its own session-length limit, a network
+// drop). Nothing is listening or speaking any more, so pause: the clock
+// stops rather than running on a dead call, and Resume reconnects.
+function onAnamClosed(reason, details){
+  if(!anamActive || !sessionId || sessionPaused) return;
+  console.warn('Avatar connection closed:', reason, details);
+  pauseSession();
+  showSessionNotice('The avatar disconnected. Press Resume to reconnect and carry on, or End for your debrief.');
+}
+
 // Shared by the opening line and every subsequent turn. delayMs gives the
 // avatar/voice a beat before speaking, feels more natural than snapping to
 // speech the instant text appears, and gives an avatar stream a moment to
@@ -3521,18 +3798,10 @@ async function speakPersonaLine(text, delayMs = 0){
     if(outputMode === 'voice'){
       await speak(text);
     } else if(outputMode === 'avatar' && anamActive && anamClient){
-      try{
-        // talk()'s own promise resolves once the request is accepted, not
-        // once the avatar has actually finished speaking out loud, so it
-        // alone isn't a safe signal to re-enable the mic on. Set up the
-        // real speech-end wait first (resolved by the MESSAGE_HISTORY_UPDATED
-        // listener in startAvatar()), then wait on it after talk() is
-        // accepted — stopAvatar() also resolves this directly so a session
-        // ending mid-speech can't leave this hanging forever.
-        const speechEnded = new Promise(resolve => { resolveAvatarSpeechEnd = resolve; });
-        await anamClient.talk(text);
-        await speechEnded;
-      }
+      // The opening line. Complete text, so talk() rather than a stream.
+      // Nothing waits for it to finish: in an avatar session the
+      // microphone stays live, and the consultant can talk over it.
+      try{ await anamClient.talk(text); }
       catch(e){ console.error('Avatar talk failed, falling back to voice:', e); await speak(text); }
     }
   } finally {
@@ -3571,6 +3840,12 @@ window.sendTurn = async function(hintText){
   const text = (typeof hintText === 'string') ? hintText : input.value.trim();
   if(!text || !sessionId) return;
   input.value = '';
+  if(handsFree()){
+    // Typed in an avatar session (the fallback to speaking): the same turn
+    // a spoken one is, so the avatar answers out loud either way.
+    runAvatarTurn(text);
+    return;
+  }
   dismissIdlePrompt(); // a message was just sent — resets the idle clock
   appendMsg('user', 'You', text);
   await serverClockQueue; // a resume still on its way has to land first, or the server would refuse this turn as paused
@@ -3589,19 +3864,7 @@ window.sendTurn = async function(hintText){
     speakPersonaLine(res.persona_reply);
   }catch(e){
     hideTypingIndicator();
-    const detail = errorDetail(e);
-    if(detail.code === 'trial_session_limit' || detail.code === 'minutes_session_limit'){
-      // The server's clock reached the limit a moment before this one did
-      // (or, on a team, colleagues used up the shared minutes meanwhile):
-      // end the same way the timer would have.
-      if(!hardLimitEndTriggered){
-        hardLimitEndTriggered = true;
-        showSessionNotice(limitEndText());
-        window.endSession();
-      }
-    } else {
-      alert('Turn failed: ' + detail.message);
-    }
+    handleTurnError(e);
   }finally{
     setSendBusy(false);
   }
@@ -3631,6 +3894,14 @@ function setMicBusy(busy){
   // sessionPaused wins even if something else tries to clear busy — see the
   // race note on pauseSession() below (canceling mid-speech resolves the
   // speaking promise, whose own .finally calls setMicBusy(false)).
+  if(outputMode === 'avatar'){
+    // Hands-free: the microphone isn't taken away while the persona talks
+    // (the consultant can interrupt), so there's no "busy". The button is
+    // the mute toggle and shows whether Anam is listening.
+    btn.disabled = sessionPaused;
+    syncMicUi();
+    return;
+  }
   btn.disabled = busy || sessionPaused;
   btn.title = sessionPaused ? "Paused" : busy ? "Wait for her to finish speaking" : "Speak your response";
   if(busy && recognizing && recognizer){ recognizer.stop(); } // stop if it was somehow still listening
@@ -3643,6 +3914,7 @@ function setMicBusy(busy){
 // the programmatic halves of that; toggleMic() (the mic button's manual
 // click handler) just wraps them with the "not supported" alert.
 function startListening(){
+  if(outputMode === 'avatar') return; // Anam is the one listening in an avatar session; two listeners would fight over the microphone
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if(!SpeechRecognition) return; // silent no-op for auto-start; toggleMic() alerts on a manual click instead
   const btn = document.getElementById('micBtn');
@@ -3669,6 +3941,7 @@ function stopListening(){
 }
 
 window.toggleMic = function(){
+  if(outputMode === 'avatar'){ window.toggleMute(); return; } // hands-free: this button mutes and unmutes
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if(!SpeechRecognition){ alert('Speech recognition is not supported in this browser. Use Chrome or Edge, or type your response.'); return; }
   if(recognizing){ stopListening(); return; }
@@ -3705,6 +3978,7 @@ function pauseSession(){
   if(!sessionId || sessionPaused) return;
   pausedAt = Date.now();
   stopTimer(); // just clears the interval — see resumeSession() for the elapsed-time fix
+  cutOffCurrentReply(false); // a reply being fetched or spoken stops here; the connection is about to close anyway
   if(outputMode === 'avatar') stopAvatar();
   if('speechSynthesis' in window) window.speechSynthesis.cancel(); // stop any mid-sentence speech
   stopListening();
@@ -3748,6 +4022,7 @@ window.endSession = async function(){
   btn.disabled = true;
   const originalLabel = btn.textContent;
   btn.textContent = 'Generating debrief…';
+  cutOffCurrentReply(true); // the session's over: nothing more gets fetched or said
   try{
     const res = await api(`/sessions/${sessionId}/end`, { method: 'POST' });
     sessionTrialBaseSec = null; // the session's over: the counter goes back to the server's figure (and the pinned copy goes away)
@@ -3791,6 +4066,7 @@ window.restartSession = function(){
     if(res && 'paid_minutes' in res) setPaidInfo(res.paid_minutes);
   });
   stopTimer();
+  cutOffCurrentReply(false);
   stopAvatarAndCamera();
   document.getElementById('centerActive').classList.add('hidden');
   document.getElementById('centerEmpty').classList.remove('hidden');
@@ -3809,6 +4085,10 @@ window.resetAll = function(){
   sessionTimeLimitSec = null;
   sessionTrialBaseSec = null;
   sessionPaidBase = null;
+  dropActiveTurn();
+  lastTurn = null;
+  spokenByCorrelation = {};
+  micDenied = false;
   hideSessionNotice();
   stopTimer();
   resetTimerDisplay();
@@ -3907,6 +4187,15 @@ function syncMuteBtn(){
 window.toggleMute = function(){
   micMuted = !micMuted;
   syncMuteBtn();
+  if(outputMode === 'avatar'){
+    // The microphone track itself is switched off, so nothing is sent to
+    // Anam while muted (it doesn't pause Anam's billing: only Pause does).
+    if(handsFree()){
+      try{ micMuted ? anamClient.muteInputAudio() : anamClient.unmuteInputAudio(); }catch(e){ console.warn(e); }
+    }
+    syncMicUi();
+    return;
+  }
   if(micMuted) stopListening();
   else if(sessionId) startListening();
 };

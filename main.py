@@ -12,6 +12,8 @@ storage required by default, see README.md for the local -> production path.
 import json
 import os
 import secrets
+import threading
+import time
 import uuid
 from datetime import datetime, timezone
 
@@ -89,7 +91,7 @@ print(
 # Bump this string any time prompts.py changes and you need
 # to confirm a restart actually picked up the new files, rather than
 # guessing. Check the uvicorn startup log for this exact line.
-BUILD_MARKER = "blocklist-vacuum-v1"
+BUILD_MARKER = "hands-free-v1"
 print(f"[consultcastai] BUILD MARKER: {BUILD_MARKER}")
 
 # Never prints the key itself, just whether one's configured and which
@@ -1146,6 +1148,48 @@ def start_session(req: StartSessionRequest, user: auth.AuthUser = Depends(auth.r
                                 paid_minutes=minutes.paid_status(account))
 
 
+class _TurnGate:
+    """One turn at a time per session.
+
+    A turn reads the session, calls Claude, and writes the session back. In
+    an avatar session the next turn can arrive while the last one is still
+    being wound up (the consultant talks over the persona: the browser hangs
+    up on that reply and sends the new message in the same instant). Without
+    this the new turn would read the session before the cut-off reply had
+    been recorded, and the two would be written in the wrong order.
+
+    Waiting is bounded, and a hold that's older than any turn can take is
+    treated as abandoned, so nothing here can lock a session up for good."""
+
+    WAIT_SEC = 15.0
+    ABANDONED_SEC = 45.0  # longer than a Claude call is allowed to run (claude_client._TIMEOUT)
+
+    def __init__(self) -> None:
+        self._changed = threading.Condition()
+        self._held_since: dict[str, float] = {}
+
+    def enter(self, session_id: str) -> None:
+        deadline = time.monotonic() + self.WAIT_SEC
+        with self._changed:
+            while True:
+                now = time.monotonic()
+                held = self._held_since.get(session_id)
+                if held is None or now - held > self.ABANDONED_SEC:
+                    self._held_since[session_id] = now
+                    return
+                if now >= deadline:
+                    raise HTTPException(status_code=503, detail="Still finishing the previous reply. Try again in a moment.")
+                self._changed.wait(min(deadline - now, 0.25))
+
+    def leave(self, session_id: str) -> None:
+        with self._changed:
+            self._held_since.pop(session_id, None)
+            self._changed.notify_all()
+
+
+_turn_gate = _TurnGate()
+
+
 def _heard_part(stored: str, spoken: str) -> str | None:
     """How much of a stored reply the avatar actually said, given the
     browser's account of it. Returns the stored reply cut back to that point,
@@ -1276,25 +1320,29 @@ def _turn_response(reply: str, result) -> TurnResponse:
 
 @app.post("/sessions/{session_id}/turn", response_model=TurnResponse)
 def send_turn(session_id: str, req: TurnRequest, user: auth.AuthUser = Depends(auth.require_approved)):
-    session, owner, result, system_prompt, history = _begin_turn(session_id, req, user)
+    _turn_gate.enter(session_id)
     try:
-        reply = claude_client.get_persona_reply(system_prompt, history)
-    except Exception as exc:
-        # Nothing was saved yet, so the consultant's message isn't on record either.
-        print(f"[consultcastai] persona reply call failed for session {session.id}: {type(exc).__name__}: {exc}")
-        raise HTTPException(status_code=502, detail="Persona reply temporarily unavailable")
-    session.conversation.append(ConversationTurn(role="assistant", content=reply, turn_id=req.turn_id))
+        session, owner, result, system_prompt, history = _begin_turn(session_id, req, user)
+        try:
+            reply = claude_client.get_persona_reply(system_prompt, history)
+        except Exception as exc:
+            # Nothing was saved yet, so the consultant's message isn't on record either.
+            print(f"[consultcastai] persona reply call failed for session {session.id}: {type(exc).__name__}: {exc}")
+            raise HTTPException(status_code=502, detail="Persona reply temporarily unavailable")
+        session.conversation.append(ConversationTurn(role="assistant", content=reply, turn_id=req.turn_id))
 
-    session.pressure = result.state.pressure
-    session.trust = result.state.trust
-    session.specificity = result.state.specificity
-    # Every turn settles the time used so far, so a session that's never
-    # formally ended (tab closed, browser crashed) has still been charged
-    # for everything up to its last exchange.
-    minutes.settle(session, owner, minutes.now_utc())
-    store.save(session)
+        session.pressure = result.state.pressure
+        session.trust = result.state.trust
+        session.specificity = result.state.specificity
+        # Every turn settles the time used so far, so a session that's never
+        # formally ended (tab closed, browser crashed) has still been charged
+        # for everything up to its last exchange.
+        minutes.settle(session, owner, minutes.now_utc())
+        store.save(session)
 
-    return _turn_response(reply, result)
+        return _turn_response(reply, result)
+    finally:
+        _turn_gate.leave(session_id)
 
 
 def _sse(event: dict) -> str:
@@ -1318,10 +1366,18 @@ def send_turn_stream(session_id: str, req: TurnRequest, request: Request, user: 
     The browser hangs up as soon as the consultant talks over the persona.
     Whatever had been written by then is kept as the reply, marked as cut
     off, and the Claude call is closed, so nothing more is generated."""
-    session, owner, result, system_prompt, history = _begin_turn(session_id, req, user)
-    # The consultant's message goes on record now: if everything after this
-    # is cut short, what they said is still part of the conversation.
-    store.save(session)
+    # Held until the reply has been recorded (the end of body() below), not
+    # just until this function returns: the response is still being written
+    # long after that.
+    _turn_gate.enter(session_id)
+    try:
+        session, owner, result, system_prompt, history = _begin_turn(session_id, req, user)
+        # The consultant's message goes on record now: if everything after
+        # this is cut short, what they said is still part of the conversation.
+        store.save(session)
+    except BaseException:
+        _turn_gate.leave(session_id)
+        raise
 
     def finish(reply: str, complete: bool, failed: bool = False) -> None:
         # Reloaded rather than reusing the copy from the start of the
@@ -1382,9 +1438,12 @@ def send_turn_stream(session_id: str, req: TurnRequest, request: Request, user: 
         finally:
             # Reached on every way out, including being cancelled outright.
             # Plain calls, not awaited ones: a cancelled task can't await.
-            pieces.close()
-            if not settled:
-                finish("".join(parts).strip(), complete=False)
+            try:
+                pieces.close()
+                if not settled:
+                    finish("".join(parts).strip(), complete=False)
+            finally:
+                _turn_gate.leave(session_id)
 
     return StreamingResponse(body(), media_type="text/event-stream", headers={
         "Cache-Control": "no-cache",

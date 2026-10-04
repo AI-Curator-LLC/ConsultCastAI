@@ -315,7 +315,33 @@ for _ in range(50):
 role, text = conversation(sid)[-1]
 assert role == "assistant" and text.endswith("...") and REPLY.startswith(text[:-3])
 assert 3 <= produced["n"] < len(REPLY.split())                        # generation stopped early
-server.should_exit = True
 print("ok 10 hanging up mid-reply stops Claude, keeps the part written, and pieces reach the browser as they are produced")
+
+# ---- 11. the next turn sent in the same instant the last reply is cut off ----
+# (what the browser does when the consultant talks over the persona)
+sid = start(cy)
+conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+conn.request("POST", f"/sessions/{sid}/turn/stream", body=json.dumps({"message": "First question.", "turn_id": "a"}),
+             headers={"Content-Type": "application/json", **bearer(cy)})
+resp = conn.getresponse()
+first = b""
+while first.count(b"data:") < 3:
+    first += resp.read1(256)
+conn.sock.shutdown(socket.SHUT_RDWR)
+resp.close()
+conn.close()
+conn2 = http.client.HTTPConnection("127.0.0.1", port, timeout=20)          # no pause at all between the two
+conn2.request("POST", f"/sessions/{sid}/turn/stream", body=json.dumps({"message": "Actually, a different question.", "turn_id": "b"}),
+              headers={"Content-Type": "application/json", **bearer(cy)})
+resp2 = conn2.getresponse()
+assert resp2.status == 200
+resp2.read()
+conn2.close()
+conv = conversation(sid)
+assert [role for role, _ in conv] == ["user", "assistant", "user", "assistant"], conv
+assert conv[0][1] == "First question." and conv[1][1].endswith("...")      # the cut-off reply was recorded first, in its place
+assert conv[2][1] == "Actually, a different question." and conv[3][1] == REPLY
+server.should_exit = True
+print("ok 11 a turn sent the instant the last reply is cut off waits for it to be recorded, so the order is right")
 
 print("\nALL PASSED")

@@ -614,6 +614,78 @@ fallback for any persona without a published Anam avatar. A persona with
 mode picker, `applyOutputMode()` decides per persona (see `/personas`'
 `has_avatar` field).
 
+### Hands-free avatar sessions
+
+An avatar session is a spoken conversation: no button to press, no text to
+review. This follows Anam's client-side custom LLM pattern.
+
+1. The session token is minted with `llmId: "CUSTOMER_CLIENT_V1"`
+   (`anam_client.py`), which turns Anam's own model off. Anam runs the
+   microphone, the speech recognition, the voice and the face; what the
+   persona says is decided here.
+2. The microphone is Anam's for as long as the connection is up
+   (`createClient` with input audio left on).
+3. `AnamEvent.MESSAGE_HISTORY_UPDATED` fires when the consultant finishes
+   speaking. The browser sends that text to
+   `POST /sessions/{id}/turn/stream`, which runs the same checks, builds the
+   same persona prompt and history, and makes the same Claude call as
+   `/turn` (they share `_begin_turn`), with `"stream": true`.
+4. The reply comes back as Server-Sent Events and each piece is passed to
+   `anamClient.createTalkMessageStream()` as it arrives, so the avatar is
+   speaking after the first few words. The final event carries the scores
+   and the coaching note, which update exactly as they do for a typed turn.
+
+What stays as it was: the text box and Send are still there and go through
+the same path (the avatar answers out loud either way), so typing works as a
+fallback and when the browser refuses the microphone. Time limits, the
+warning, the clean end, the idle prompt and the debrief are untouched; a
+persona without an avatar still uses `/turn` and the browser's own speech
+recognition.
+
+Mute switches the microphone track off (`muteInputAudio`), so nothing is
+sent to Anam. Pause closes the connection, which releases the microphone and
+stops both Anam's billing and this app's clock (`/pause`); Resume opens a new
+connection and carries on, since the conversation is held here, not by Anam.
+If Anam closes the connection itself, the session pauses the same way and
+offers Resume.
+
+**Talking over the persona.** Anam stops the avatar when the consultant
+speaks and emits `TALK_STREAM_INTERRUPTED`. The browser then hangs up on the
+reply stream; the server notices between pieces, closes the Claude call, and
+keeps what had been written, marked as cut off. With its next turn the
+browser reports how much the avatar had actually said (from Anam's
+transcript of the persona's speech), and the server cuts its record back to
+that (`_apply_spoken_reply`), so the next reply and the debrief work from
+what was heard rather than what was written. The report can only shorten
+the latest reply; text that isn't the start of it is ignored. If nothing was
+said at all, the reply is dropped and the two halves of what the consultant
+said become one turn. Turns for a session are taken one at a time
+(`_TurnGate`), so a turn sent in the same instant the last one is cut off
+can't be recorded out of order.
+
+**What Anam charges for, and its limits** (from Anam's pricing and billing
+pages, checked October 2026; confirm against your own plan):
+- Billing is by the second of connected session time, at the plan's rate.
+  Using your own LLM doesn't change Anam's price; Claude is billed
+  separately by Anthropic, as before.
+- Silence, a muted microphone and an idle avatar are all still billed. Only
+  closing the connection stops it, which is why Pause and the idle
+  disconnect close it rather than mute it.
+- Each plan has a maximum session length (3 minutes on Free, 5 on Starter,
+  10 on Explorer, 2 hours on Growth and Professional) and a number of
+  simultaneous sessions (1, 1, 3, 5, 10). A paid session here can run 30
+  minutes and a trial session 10, so anything below Growth will cut
+  sessions short; when that happens the session pauses and offers Resume.
+  Past the concurrency limit, starting an avatar fails and the session
+  falls back to voice.
+- Streaming means a reply that's interrupted stops being generated, so
+  hands-free costs slightly less in Claude output than generating every
+  reply in full.
+
+Tests: `python tests/test_handsfree.py` (throwaway files, the AI replaced by
+stand-ins; the last two sections start a local server to show what happens
+when the browser hangs up mid-reply).
+
 ### Cost controls for live avatar sessions
 
 Anam bills by the connected minute, so a live avatar session carries a real
