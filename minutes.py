@@ -49,6 +49,25 @@ TRIAL_MIN_START_SEC = int(os.environ.get("TRIAL_MIN_START_SECONDS", "60"))
 # refusing turns on its own. Time past the limit is never charged either way.
 TRIAL_TURN_GRACE_SEC = int(os.environ.get("TRIAL_TURN_GRACE_SECONDS", "10"))
 
+# Avatar sessions, on every plan. Anam (the avatar service) closes a
+# connection at its own plan's maximum session length, mid-sentence and
+# without a debrief; this ends the session cleanly just before that. Set it
+# to the Anam plan's maximum: 10 minutes on Explorer, 120 on Growth and
+# Professional. It limits one sitting, not the month: minutes are still
+# counted against the trial or the plan as usual. Voice-only sessions are
+# not affected.
+AVATAR_SESSION_SEC = int(os.environ.get("AVATAR_SESSION_MINUTES", "10")) * 60
+AVATAR_WARNING_SEC = int(os.environ.get("AVATAR_WARNING_SECONDS", "60"))
+
+
+def avatar_limit() -> dict:
+    """What the frontend needs to end an avatar session on time. Sent with
+    the session (see main.start_session) rather than built into the page,
+    so changing the environment variable is all it takes. The browser is
+    what enforces it: the point is to hang up before Anam does, and a
+    browser that ignored it would simply be cut off by Anam instead."""
+    return {"session_limit_sec": AVATAR_SESSION_SEC, "warning_sec": AVATAR_WARNING_SEC}
+
 
 # --- paid plans ---
 # Minutes included each calendar month (UTC). Team's is one pool for the

@@ -555,8 +555,9 @@ balance. When the minutes are used, a panel says so, says when they reset
 a Pro account or a team owner; the account menu has "Add minutes" for the
 same people. The Team screen (account menu, "Team") shows the same
 figures for the team, with the button for the owner. Coming back from Stripe (`?payment=topup_success`) the page
-re-reads `/auth/me` until the new balance shows. A live avatar session on a
-paid plan keeps its 30-minute limit: whichever limit comes first applies.
+re-reads `/auth/me` until the new balance shows. A live avatar session on
+any plan also has the avatar session limit (10 minutes, see "Cost controls
+for live avatar sessions"): whichever limit comes first applies.
 
 **Switching top-ups on.** In Stripe: create a product "100 extra practice
 minutes" with a one-time Price of $40, and add
@@ -673,11 +674,11 @@ pages, checked October 2026; confirm against your own plan):
   disconnect close it rather than mute it.
 - Each plan has a maximum session length (3 minutes on Free, 5 on Starter,
   10 on Explorer, 2 hours on Growth and Professional) and a number of
-  simultaneous sessions (1, 1, 3, 5, 10). A paid session here can run 30
-  minutes and a trial session 10, so anything below Growth will cut
-  sessions short; when that happens the session pauses and offers Resume.
-  Past the concurrency limit, starting an avatar fails and the session
-  falls back to voice.
+  simultaneous sessions (1, 1, 3, 5, 10). This deploy is on Explorer: 10
+  minutes, 3 at a time. Avatar sessions here end themselves at
+  `AVATAR_SESSION_MINUTES` (10) so Anam's cut-off is never reached; see
+  "Cost controls for live avatar sessions". Past the concurrency limit,
+  starting an avatar fails and the session falls back to voice.
 - Streaming means a reply that's interrupted stops being generated, so
   hands-free costs slightly less in Claude output than generating every
   reply in full.
@@ -698,12 +699,37 @@ track of real elapsed time. A `visibilitychange` listener forces that check
 immediately on wake, rather than waiting on a `setInterval` tick the browser
 may have throttled or suspended entirely while hidden.
 
-- **Hard time limit** (`HARD_LIMIT_SEC`, 30 min): ends the session
-  automatically through the exact same path as clicking End yourself — a
-  normal debrief, not an error — with a one-time warning
-  (`HARD_LIMIT_WARNING_AT_SEC`, 25 min) shown first. A trial session's own
-  shorter limit (see "Trial and minutes tracking") takes its place, and
-  applies in voice mode too.
+- **Avatar session limit** (`AVATAR_SESSION_MINUTES`, 10): ends an avatar
+  session automatically through the exact same path as clicking End
+  yourself, so it finishes with a normal debrief, with a one-time warning
+  `AVATAR_WARNING_SECONDS` (60) before: at 9:00 and 10:00 by default. It
+  applies on every plan, to avatar sessions only; a voice-only session has
+  no such limit. It exists because Anam closes a connection at its plan's
+  maximum session length (10 minutes on Explorer), mid-sentence and with no
+  debrief; this hangs up cleanly first.
+  - **To change it** (after upgrading the Anam plan, say to Growth's 2
+    hours): set `AVATAR_SESSION_MINUTES` on `consultcastai-api`, in
+    `render.yaml` or in the Render dashboard under Environment. The service
+    restarts and sessions started after that use the new figure. Nothing in
+    the frontend changes: the limit and the warning time are sent with each
+    session (`avatar_limit` in the response to `POST /sessions`, from
+    `minutes.avatar_limit`). Keep it at or below Anam's own maximum.
+  - It limits one sitting, not the month. A trial's or a paid plan's
+    minutes are counted and enforced as before (`time_limit_sec`), in any
+    mode, and whichever limit comes first applies. When both fall at the
+    same moment the minutes limit is the one the person is told about.
+  - Paused time doesn't count. Each Resume opens a new Anam connection, so
+    no single connection is ever older than the session's active time.
+  - The avatar connection is closed the moment a session ends, before the
+    debrief is requested, not once it has come back: those seconds are
+    exactly when Anam would otherwise cut in. If Anam does hang up a moment
+    before the limit (a background tab runs its timers late), that is
+    treated as the limit: a clean end with the debrief, not "the avatar
+    disconnected". If the debrief request itself fails, the session is left
+    paused rather than running with no avatar.
+  - The browser enforces this limit; the server only supplies the number.
+    That's deliberate: its purpose is to beat Anam's cut-off, and a browser
+    that ignored it would simply be cut off by Anam instead.
 - **Idle disconnect** (`IDLE_TIMEOUT_SEC`, 5 min of no real speech captured
   and no message sent): shows a "still there?" prompt, then disconnects the
   avatar (reusing the manual Pause button's own code path, so Resume works

@@ -91,7 +91,7 @@ print(
 # Bump this string any time prompts.py changes and you need
 # to confirm a restart actually picked up the new files, rather than
 # guessing. Check the uvicorn startup log for this exact line.
-BUILD_MARKER = "hands-free-v1"
+BUILD_MARKER = "avatar-cap-v1"
 print(f"[consultcastai] BUILD MARKER: {BUILD_MARKER}")
 
 # Never prints the key itself, just whether one's configured and which
@@ -1145,7 +1145,9 @@ def start_session(req: StartSessionRequest, user: auth.AuthUser = Depends(auth.r
             store.increment_session_count(user.rep_id, month_key)
 
     return StartSessionResponse(**session.model_dump(), trial=minutes.trial_status(account),
-                                paid_minutes=minutes.paid_status(account))
+                                paid_minutes=minutes.paid_status(account),
+        avatar_limit=minutes.avatar_limit() if (persona.avatar_id and persona.voice_id) else None,
+    )
 
 
 class _TurnGate:

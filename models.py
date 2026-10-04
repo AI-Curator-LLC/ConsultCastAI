@@ -111,6 +111,9 @@ class StartSessionResponse(SessionRecord):
     trial: dict | None = None
     # The same for a paid account (minutes.paid_status), None otherwise.
     paid_minutes: dict | None = None
+    # Set when the persona has a live avatar: how long an avatar session may
+    # run and when to warn (minutes.avatar_limit). None for a voice-only one.
+    avatar_limit: dict | None = None
 
 
 class StartSessionRequest(BaseModel):

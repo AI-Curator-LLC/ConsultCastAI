@@ -893,7 +893,7 @@
 
       <!-- Cost-control notices for live avatar sessions: the 5-minutes-left
            warning, and the "still there?" idle prompt. Hidden the rest of
-           the time. See HARD_LIMIT_SEC/IDLE_TIMEOUT_SEC and the idle-check
+           the time. See avatarLimitSec/IDLE_TIMEOUT_SEC and the idle-check
            block inside updateTimerDisplay(). -->
       <div class="card session-notice hidden" id="sessionNotice">
         <p id="sessionNoticeText"></p>
@@ -1229,7 +1229,7 @@ let pausedAt = null;
 let sessionStartedAt = null;
 let timerInterval = null;
 
-// Cost-control state (see HARD_LIMIT_SEC/IDLE_TIMEOUT_SEC above) — all
+// Cost-control state (see avatarLimitSec/IDLE_TIMEOUT_SEC above) — all
 // reset per session in startSession()/resumeSession()/resetAll().
 let hardLimitWarningShown = false;
 let hardLimitEndTriggered = false;
@@ -1260,11 +1260,16 @@ const TIME_RED_AT_SEC = 13 * 60;
 // minute) — both gated on outputMode === 'avatar', see applyOutputMode():
 // a voice-only session has no live per-minute connection to protect
 // against, so neither of these arms for one.
-// HARD_LIMIT: ends the session automatically, with the normal debrief (not
-// an error) — same code path as clicking End yourself. WARNING fires once,
-// a few minutes ahead of that.
-const HARD_LIMIT_SEC = 30 * 60;
-const HARD_LIMIT_WARNING_AT_SEC = 25 * 60;
+// The avatar session limit: ends the session automatically, with the normal
+// debrief (not an error), the same code path as clicking End yourself, with
+// a warning shortly before. It applies on every plan and exists because
+// Anam closes a connection at its own plan's maximum session length,
+// mid-sentence; this hangs up cleanly first. The real figures come from the
+// server with each session (AVATAR_SESSION_MINUTES and
+// AVATAR_WARNING_SECONDS, see minutes.avatar_limit), so they're changed in
+// Render, not here. These are only what's used if the server sends none.
+let avatarLimitSec = 10 * 60;
+let avatarWarningSec = 60;
 // IDLE: no real speech captured and no message sent for this long shows a
 // "still there?" prompt; GRACE is how long after that prompt before an
 // unanswered session auto-pauses (disconnects the avatar, same as the
@@ -1319,33 +1324,27 @@ function updateTimerDisplay(){
 // checks naturally stop entirely while paused, with no separate flag needed
 // for that.
 //
-// Two different limits can apply. A trial session has one set by the
-// server (sessionTimeLimitSec: the per-session trial cap, or whatever is
-// left of the trial if that's less), in any output mode. Otherwise only a
-// live avatar session has one (HARD_LIMIT_SEC) — a voice-only session on a
-// paid plan has no per-minute connection to protect against. Idle
-// disconnect is about the avatar connection alone, so it stays gated on
-// avatar mode either way.
+// The limits themselves are described inside the function. Idle disconnect
+// is about the avatar connection alone, so it is gated on avatar mode.
 function checkCostControls(elapsedSec){
-  // A paid session's limit is whatever its plan's minutes had left when it
-  // started, which can be hours away. A live avatar session on a paid plan
-  // keeps its own 30-minute limit as well: whichever comes first applies.
-  const avatarFirst = sessionPaidBase !== null && outputMode === 'avatar'
-    && sessionTimeLimitSec !== null && HARD_LIMIT_SEC < sessionTimeLimitSec;
-  const isTrialLimit = sessionTimeLimitSec !== null && !avatarFirst; // the server's limit: a trial's, or a paid plan's minutes
-  const limit = isTrialLimit ? sessionTimeLimitSec : (outputMode === 'avatar' ? HARD_LIMIT_SEC : null);
+  // Two limits can apply, and whichever comes first does. The server's
+  // (sessionTimeLimitSec): what was left of a trial, or of a paid plan's
+  // minutes, when the session started; in any mode. And, for a live avatar
+  // session only, the avatar limit. When the two fall at the same moment
+  // the minutes limit is the one named, since that's the one the person
+  // can do something about.
+  const avatarCap = outputMode === 'avatar' ? avatarLimitSec : null;
+  const byAvatar = avatarCap !== null && (sessionTimeLimitSec === null || avatarCap < sessionTimeLimitSec);
+  const limit = byAvatar ? avatarCap : sessionTimeLimitSec;
   if(limit !== null){
-    const warnAt = isTrialLimit ? Math.max(0, limit - limitWarningSec()) : HARD_LIMIT_WARNING_AT_SEC;
+    const warnAt = Math.max(0, limit - (byAvatar ? avatarWarningSec : limitWarningSec()));
     if(!hardLimitWarningShown && elapsedSec >= warnAt){
       hardLimitWarningShown = true;
-      showSessionNotice(isTrialLimit
-        ? limitWarningText(limit - elapsedSec)
-        : '5 minutes left in this session. It will end automatically at the 30-minute mark, with your debrief.');
+      showSessionNotice(byAvatar ? avatarWarningText(limit - elapsedSec) : limitWarningText(limit - elapsedSec));
     }
     if(!hardLimitEndTriggered && elapsedSec >= limit){
       hardLimitEndTriggered = true;
-      if(isTrialLimit) showSessionNotice(limitEndText());
-      else hideSessionNotice();
+      showSessionNotice(byAvatar ? avatarEndText() : limitEndText());
       window.endSession(); // same path as clicking End yourself — normal debrief, not an error
       return; // endSession() tears down the avatar itself; nothing left to idle-check
     }
@@ -1362,6 +1361,20 @@ function checkCostControls(elapsedSec){
   } else if(Math.floor((Date.now() - idlePromptShownAt) / 1000) >= IDLE_GRACE_SEC){
     idleDisconnect();
   }
+}
+
+function avatarLimitMinutes(){
+  return Math.round(avatarLimitSec / 60);
+}
+
+function avatarWarningText(secondsLeft){
+  const mins = Math.round(secondsLeft / 60);
+  const left = secondsLeft >= 60 ? `${mins} minute${mins === 1 ? '' : 's'}` : 'Less than a minute';
+  return `${left} left in this avatar session. It will end automatically at the ${avatarLimitMinutes()}-minute mark, with your debrief.`;
+}
+
+function avatarEndText(){
+  return `Avatar sessions are limited to ${avatarLimitMinutes()} minutes, so this one has ended. Your debrief is below.`;
 }
 
 function trialWarningSec(){
@@ -3214,6 +3227,10 @@ window.startSession = async function(){
     // The server sets this session's limit (a trial's, or what a paid
     // plan's minutes have left) and reports what was left as it started.
     sessionTimeLimitSec = (typeof session.time_limit_sec === 'number') ? session.time_limit_sec : null;
+    if(session.avatar_limit){
+      avatarLimitSec = session.avatar_limit.session_limit_sec;
+      avatarWarningSec = session.avatar_limit.warning_sec;
+    }
     sessionTrialBaseSec = session.trial ? session.trial.remaining_sec : null;
     setTrialInfo(session.trial);
     // A paid plan with the minutes cap on: the same two things, from what
@@ -3779,6 +3796,17 @@ function onMicDenied(){
 function onAnamClosed(reason, details){
   if(!anamActive || !sessionId || sessionPaused) return;
   console.warn('Avatar connection closed:', reason, details);
+  if(hardLimitEndTriggered) return; // already ending
+  const elapsedSec = sessionStartedAt ? Math.floor((Date.now() - sessionStartedAt) / 1000) : 0;
+  if(elapsedSec >= avatarLimitSec - 10){
+    // Anam's own session limit beat ours by a moment (a tab in the
+    // background runs its timers late). Same outcome either way: a clean
+    // end with the debrief, not "the avatar disconnected".
+    hardLimitEndTriggered = true;
+    showSessionNotice(avatarEndText());
+    window.endSession();
+    return;
+  }
   pauseSession();
   showSessionNotice('The avatar disconnected. Press Resume to reconnect and carry on, or End for your debrief.');
 }
@@ -4023,6 +4051,12 @@ window.endSession = async function(){
   const originalLabel = btn.textContent;
   btn.textContent = 'Generating debrief…';
   cutOffCurrentReply(true); // the session's over: nothing more gets fetched or said
+  // Close the avatar connection now, not once the debrief has come back.
+  // Writing the debrief takes several seconds; at the avatar time limit
+  // those are the seconds in which Anam would cut the connection itself,
+  // and on any End they're seconds of avatar time nobody is using.
+  const hadAvatar = outputMode === 'avatar' && (anamActive || avatarStarting);
+  stopAvatar();
   try{
     const res = await api(`/sessions/${sessionId}/end`, { method: 'POST' });
     sessionTrialBaseSec = null; // the session's over: the counter goes back to the server's figure (and the pinned copy goes away)
@@ -4046,7 +4080,12 @@ window.endSession = async function(){
     document.getElementById('debriefScreen').scrollIntoView({ behavior: 'smooth' });
     setComposerEnabled(false); // session is over, nothing left to send to
   }catch(e){
-    alert('Could not end session: ' + e.message);
+    // The session is still open, but its avatar connection is already
+    // closed. Leave it properly paused (clock stopped, Resume reconnects)
+    // rather than running with nothing on the other end.
+    if(hadAvatar && !sessionPaused) pauseSession();
+    hardLimitEndTriggered = false; // let the limit end it again if that's what this was
+    alert('Could not end session: ' + errorDetail(e).message + (hadAvatar ? '. The session is paused. Press End to try again, or Resume to carry on.' : ''));
   }finally{
     btn.disabled = false;
     btn.textContent = originalLabel;

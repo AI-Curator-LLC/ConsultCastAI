@@ -344,4 +344,23 @@ assert conv[2][1] == "Actually, a different question." and conv[3][1] == REPLY
 server.should_exit = True
 print("ok 11 a turn sent the instant the last reply is cut off waits for it to be recorded, so the order is right")
 
+# ---- 12. the avatar session limit is the server's to set ----
+import subprocess  # noqa: E402
+
+assert content.get_persona(PERSONA).avatar_id                         # the persona used throughout has an avatar
+r = client.post("/sessions", json={"persona_id": PERSONA, "scenario_id": SCENARIO}, headers=bearer(cy))
+assert r.json()["avatar_limit"] == {"session_limit_sec": 600, "warning_sec": 60}      # 10 minutes, warning 1 minute before
+assert r.json()["time_limit_sec"] != 600                              # and it is not the minutes limit: Pro's month is untouched
+voice_only = next(p for p in content.PERSONAS if not content.get_persona(p).avatar_id)
+voice_scenario = next(sc.id for sc in content.list_active_scenarios() if sc.persona_id == voice_only)
+r = client.post("/sessions", json={"persona_id": voice_only, "scenario_id": voice_scenario}, headers=bearer(cy))
+assert r.status_code == 200 and r.json()["avatar_limit"] is None      # a voice-only session has no such limit
+root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+out = subprocess.run(
+    [sys.executable, "-c", "import minutes; print(minutes.avatar_limit())"], cwd=root, capture_output=True, text=True,
+    env={**os.environ, "AVATAR_SESSION_MINUTES": "120", "AVATAR_WARNING_SECONDS": "300"},
+)
+assert out.stdout.strip() == "{'session_limit_sec': 7200, 'warning_sec': 300}", out.stdout + out.stderr
+print("ok 12 an avatar session carries its 10-minute limit and 1-minute warning; both come from environment variables; voice-only has none")
+
 print("\nALL PASSED")
