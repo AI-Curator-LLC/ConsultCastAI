@@ -55,6 +55,7 @@
 .aic-switch-btn:hover,.aic-switch-btn[aria-expanded="true"]{border-color:#19d7ff;box-shadow:0 0 18px rgba(25,215,255,.4);}
 .aic-switch-btn:focus-visible{outline:2px solid #19d7ff;outline-offset:2px;}
 .aic-switch-btn img{width:22px;height:22px;display:block;}
+@media (pointer:coarse){.aic-switch-btn{width:40px;height:40px;}.aic-switch-btn img{width:26px;height:26px;}}
 .aic-switch-menu{position:absolute;right:0;top:calc(100% + 8px);z-index:9999;min-width:210px;padding:6px;text-align:left;
   background:#10142b;border:1px solid #34366c;border-radius:12px;box-shadow:0 16px 35px rgba(0,0,0,.6);}
 .aic-switch-menu[hidden]{display:none;}

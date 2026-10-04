@@ -599,6 +599,17 @@
     .video-call-row{flex-direction:column;}
     .brand-text{font-size:16px;}
     h2{font-size:15px;}
+    /* the account controls sit beside the logo; the counter and status wrap beneath */
+    .conn{display:contents;}
+    .brand{flex:1 1 auto;}
+    .aic-switch, .profile-wrap{order:1;}
+    .profile-wrap{margin-left:0;}
+    .live-pill, .trial-pill, .timer-pill, #statusBadge{order:2;}
+    .adv-panel{order:3;}
+    /* thumb-sized controls */
+    .profile-avatar{width:40px; height:40px;}
+    .ctl, .mic-btn, .btn-uniform, .composer input{min-height:44px;}
+    select{min-height:44px;}
   }
 </style>
 </head>
@@ -1175,7 +1186,7 @@
 
 <!-- The AI Curator app switcher (suite_switcher.js): the Command Center and the other
      two apps, one click away. The same script in all three apps. -->
-<script src="suite_switcher.js?v=1" data-app="consultcastai" data-before="#profileWrap"
+<script src="suite_switcher.js?v=2" data-app="consultcastai" data-before="#profileWrap"
         data-icon="assets/aicurator-spark.png"></script>
 <script type="module">
 import { createClient, AnamEvent } from "https://cdn.jsdelivr.net/npm/@anam-ai/js-sdk@4/+esm";
