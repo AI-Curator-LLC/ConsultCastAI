@@ -53,6 +53,10 @@ class InviteRequest(BaseModel):
 class ConversationTurn(BaseModel):
     role: str  # "user" (consultant) | "assistant" (persona)
     content: str
+    # Set by the browser for avatar turns (see TurnRequest): lets it say, on
+    # its next request, how much of THIS reply the avatar actually got to
+    # speak before it was interrupted.
+    turn_id: str | None = None
 
 
 class SessionRecord(BaseModel):
@@ -118,6 +122,14 @@ class StartSessionRequest(BaseModel):
 
 class TurnRequest(BaseModel):
     message: str
+    # Avatar (hands-free) turns only; a typed turn in voice mode sends none
+    # of these. turn_id names this turn. spoken_reply / spoken_reply_turn
+    # report what became of the PREVIOUS reply once the consultant talked
+    # over it: the part the avatar had actually said ("" if it never got to
+    # start), and the turn_id that reply belongs to. See main._apply_spoken_reply.
+    turn_id: str | None = None
+    spoken_reply: str | None = None
+    spoken_reply_turn: str | None = None
 
 
 class TurnResponse(BaseModel):

@@ -9,6 +9,7 @@ Draft status: solo-founder scale. No SSO, no secrets manager, no cloud
 storage required by default, see README.md for the local -> production path.
 """
 
+import json
 import os
 import secrets
 import uuid
@@ -21,7 +22,8 @@ from pydantic import BaseModel, Field
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
+from starlette.concurrency import run_in_threadpool
 
 import auth
 import claude_client
@@ -1144,8 +1146,75 @@ def start_session(req: StartSessionRequest, user: auth.AuthUser = Depends(auth.r
                                 paid_minutes=minutes.paid_status(account))
 
 
-@app.post("/sessions/{session_id}/turn", response_model=TurnResponse)
-def send_turn(session_id: str, req: TurnRequest, user: auth.AuthUser = Depends(auth.require_approved)):
+def _heard_part(stored: str, spoken: str) -> str | None:
+    """How much of a stored reply the avatar actually said, given the
+    browser's account of it. Returns the stored reply cut back to that point,
+    "" if nothing was said, or None if the account can't be used.
+
+    The browser's text comes from the avatar service's own transcript of
+    what it spoke, so it should be the start of what was sent. It's still
+    the browser saying so: it's only ever allowed to shorten the reply this
+    server already holds, never to put words into it. Text that isn't the
+    start of the stored reply is ignored."""
+    stored_words = stored.removesuffix("...").split()
+    spoken_words = spoken.split()
+    if not spoken_words:
+        return ""
+    matched = 0
+    for mine, theirs in zip(stored_words, spoken_words):
+        if mine.strip(".,!?;:\"'").lower() != theirs.strip(".,!?;:\"'").lower():
+            break
+        matched += 1
+    # The last spoken word is often cut mid-word, so one mismatch at the end
+    # is expected; more than that and this isn't the start of the reply.
+    if matched < len(spoken_words) - 1:
+        return None
+    if matched >= len(stored_words):
+        return stored  # all of it was said
+    return " ".join(stored_words[:matched])
+
+
+def _apply_spoken_reply(session: SessionRecord, req: TurnRequest) -> None:
+    """In an avatar session the consultant can talk over the persona. When
+    that happens the reply on record is longer than what was actually said,
+    and the persona would go on as if it had finished its point. The browser
+    reports how far the avatar got; the record is cut back to match, so the
+    next reply (and the debrief) work from what was really heard.
+
+    If nothing was said at all, the reply is dropped: the consultant simply
+    kept talking, and this message carries on their turn (see _add_user_turn)."""
+    if req.spoken_reply is None or not req.spoken_reply_turn:
+        return
+    conv = session.conversation
+    if not conv or conv[-1].role != "assistant" or conv[-1].turn_id != req.spoken_reply_turn:
+        return  # not about the reply this conversation currently ends on
+    heard = _heard_part(conv[-1].content, req.spoken_reply)
+    if heard is None or heard == conv[-1].content:
+        return
+    if heard == "":
+        conv.pop()
+    else:
+        conv[-1].content = heard + "..."
+
+
+def _add_user_turn(session: SessionRecord, req: TurnRequest) -> None:
+    """Appends the consultant's message. If the conversation already ends on
+    one of theirs (the reply to it was never spoken, or never produced), this
+    is the rest of the same turn, not a second turn in a row."""
+    conv = session.conversation
+    if conv and conv[-1].role == "user":
+        conv[-1].content = conv[-1].content.rstrip() + " " + req.message
+        conv[-1].turn_id = req.turn_id
+    else:
+        conv.append(ConversationTurn(role="user", content=req.message, turn_id=req.turn_id))
+
+
+def _begin_turn(session_id: str, req: TurnRequest, user: auth.AuthUser):
+    """Everything a turn checks and sets up before Claude is called, shared by
+    the plain and the streaming endpoint so the two can't drift apart: the
+    session exists and is the caller's, isn't ended or paused, is inside its
+    time limit, and its persona still exists. Raises the same errors either
+    way; nothing has been charged or saved if it does."""
     session = store.get(session_id)
     if not session:
         raise HTTPException(404, "Session not found")
@@ -1187,16 +1256,34 @@ def send_turn(session_id: str, req: TurnRequest, user: auth.AuthUser = Depends(a
     result = coaching.evaluate(req.message, state, first_name)
     _coaching_state[session_id] = result.state
 
-    session.conversation.append(ConversationTurn(role="user", content=req.message))
+    _apply_spoken_reply(session, req)
+    _add_user_turn(session, req)
     system_prompt = build_system_prompt(persona, scenario, session.call_direction)
     history = [{"role": t.role, "content": t.content} for t in session.conversation]
+    return session, owner, result, system_prompt, history
+
+
+def _turn_response(reply: str, result) -> TurnResponse:
+    return TurnResponse(
+        persona_reply=reply,
+        pressure=result.state.pressure,
+        trust=result.state.trust,
+        specificity=result.state.specificity,
+        coaching_note_kind=result.note_kind,
+        coaching_note_text=result.note_text,
+    )
+
+
+@app.post("/sessions/{session_id}/turn", response_model=TurnResponse)
+def send_turn(session_id: str, req: TurnRequest, user: auth.AuthUser = Depends(auth.require_approved)):
+    session, owner, result, system_prompt, history = _begin_turn(session_id, req, user)
     try:
         reply = claude_client.get_persona_reply(system_prompt, history)
     except Exception as exc:
-        session.conversation.pop()  # drop the user turn we just appended, nothing was saved yet
+        # Nothing was saved yet, so the consultant's message isn't on record either.
         print(f"[consultcastai] persona reply call failed for session {session.id}: {type(exc).__name__}: {exc}")
         raise HTTPException(status_code=502, detail="Persona reply temporarily unavailable")
-    session.conversation.append(ConversationTurn(role="assistant", content=reply))
+    session.conversation.append(ConversationTurn(role="assistant", content=reply, turn_id=req.turn_id))
 
     session.pressure = result.state.pressure
     session.trust = result.state.trust
@@ -1207,14 +1294,102 @@ def send_turn(session_id: str, req: TurnRequest, user: auth.AuthUser = Depends(a
     minutes.settle(session, owner, minutes.now_utc())
     store.save(session)
 
-    return TurnResponse(
-        persona_reply=reply,
-        pressure=result.state.pressure,
-        trust=result.state.trust,
-        specificity=result.state.specificity,
-        coaching_note_kind=result.note_kind,
-        coaching_note_text=result.note_text,
-    )
+    return _turn_response(reply, result)
+
+
+def _sse(event: dict) -> str:
+    return "data: " + json.dumps(event) + "\n\n"
+
+
+@app.post("/sessions/{session_id}/turn/stream")
+def send_turn_stream(session_id: str, req: TurnRequest, request: Request, user: auth.AuthUser = Depends(auth.require_approved)):
+    """The same turn as /turn, with the reply sent a piece at a time so an
+    avatar can start speaking the first sentence while the rest is still
+    being written. Used by avatar (hands-free) sessions; /turn is unchanged
+    and still used for typed and voice-mode turns.
+
+    Every check runs before the response starts (see _begin_turn), so a
+    refused turn is an ordinary JSON error with its usual status code, not a
+    stream. After that the body is Server-Sent Events, one JSON object each:
+      {"type": "chunk", "text": ...}   the next piece of the reply
+      {"type": "done", ...}            the complete reply, scores and coaching note (TurnResponse's fields)
+      {"type": "error", "message": ...} Claude failed part-way
+
+    The browser hangs up as soon as the consultant talks over the persona.
+    Whatever had been written by then is kept as the reply, marked as cut
+    off, and the Claude call is closed, so nothing more is generated."""
+    session, owner, result, system_prompt, history = _begin_turn(session_id, req, user)
+    # The consultant's message goes on record now: if everything after this
+    # is cut short, what they said is still part of the conversation.
+    store.save(session)
+
+    def finish(reply: str, complete: bool, failed: bool = False) -> None:
+        # Reloaded rather than reusing the copy from the start of the
+        # request: a pause, or the session being ended, may have been saved
+        # in the seconds this took, and writing the old copy back would
+        # undo it.
+        current = store.get(session_id)
+        if not current:
+            return
+        conv = current.conversation
+        if failed and not reply and conv and conv[-1].role == "user" and conv[-1].content == req.message:
+            # Claude failed before writing anything: take the consultant's
+            # message back off the record, as /turn does, so sending it
+            # again isn't recorded as saying it twice.
+            conv.pop()
+        if reply:
+            current.conversation.append(ConversationTurn(
+                role="assistant", content=reply if complete else reply + "...", turn_id=req.turn_id,
+            ))
+        current.pressure = result.state.pressure
+        current.trust = result.state.trust
+        current.specificity = result.state.specificity
+        minutes.settle(current, owner, minutes.now_utc())
+        store.save(current)
+
+    async def body():
+        # An async generator pulling from a blocking one. Claude's stream is
+        # read with blocking I/O, so each piece is fetched on a worker
+        # thread; between pieces this asks whether the browser is still
+        # there. Leaving that to the server to notice doesn't work: it goes
+        # on accepting writes to a connection that's gone, and the whole
+        # reply would be generated (and paid for) with nobody listening.
+        pieces = claude_client.stream_persona_reply(system_prompt, history)
+        parts: list[str] = []
+        settled = False
+        try:
+            while True:
+                try:
+                    piece = await run_in_threadpool(next, pieces, None)
+                except Exception as exc:
+                    print(f"[consultcastai] persona reply stream failed for session {session_id}: {type(exc).__name__}: {exc}")
+                    settled = True
+                    await run_in_threadpool(finish, "".join(parts).strip(), False, True)
+                    yield _sse({"type": "error", "message": "Persona reply temporarily unavailable"})
+                    return
+                if piece is None:
+                    break
+                parts.append(piece)
+                if await request.is_disconnected():
+                    # The browser hung up mid-reply (the consultant spoke,
+                    # paused, or left). Stop Claude, keep what was written.
+                    return
+                yield _sse({"type": "chunk", "text": piece})
+            reply = "".join(parts).strip()
+            settled = True
+            await run_in_threadpool(finish, reply, True)
+            yield _sse({"type": "done", **_turn_response(reply, result).model_dump()})
+        finally:
+            # Reached on every way out, including being cancelled outright.
+            # Plain calls, not awaited ones: a cancelled task can't await.
+            pieces.close()
+            if not settled:
+                finish("".join(parts).strip(), complete=False)
+
+    return StreamingResponse(body(), media_type="text/event-stream", headers={
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",  # tell any proxy in between not to hold pieces back to batch them
+    })
 
 
 @app.post("/sessions/{session_id}/end", response_model=EndSessionResponse)
@@ -1391,7 +1566,7 @@ def export_my_data(user: auth.AuthUser = Depends(auth.verify_user)):
             "specificity": s.specificity,
             "debrief": s.debrief,
             "transcript_purged": s.transcript_purged,
-            "transcript": None if s.transcript_purged else [t.model_dump() for t in s.conversation],
+            "transcript": None if s.transcript_purged else [{"role": t.role, "content": t.content} for t in s.conversation],
         }
 
     if account is None:

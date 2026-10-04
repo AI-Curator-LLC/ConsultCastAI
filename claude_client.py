@@ -65,6 +65,77 @@ def _call(system: str, messages: list[dict], max_tokens: int) -> str:
     return text.strip()
 
 
+def _stream(system: str, messages: list[dict], max_tokens: int):
+    """Same request as _call with "stream": true, yielding each piece of text
+    as it arrives instead of returning the whole reply at the end.
+
+    The response is Server-Sent Events: one "data: {json}" line per event.
+    Only two kinds matter here. content_block_delta with a text_delta carries
+    the next piece of text; error (an overload part-way through, say) arrives
+    in the body of what is already an HTTP 200, so it has to be raised from
+    here or it would pass for a reply that just stopped. Everything else
+    (message_start, ping, content_block_start/stop, message_delta,
+    message_stop) is bookkeeping and is skipped; the stream ending is what
+    ends the reply.
+
+    Closing the generator early closes the connection, which stops the
+    generation: that's how an interrupted reply stops costing anything."""
+    api_key = _require_key()
+    payload = json.dumps({
+        "model": _MODEL,
+        "max_tokens": max_tokens,
+        "system": system,
+        "messages": messages,
+        "stream": True,
+    }).encode("utf-8")
+    request = urllib.request.Request(
+        _API_URL,
+        data=payload,
+        method="POST",
+        headers={
+            "x-api-key": api_key,
+            "anthropic-version": _ANTHROPIC_VERSION,
+            "content-type": "application/json",
+        },
+    )
+    try:
+        response = urllib.request.urlopen(request, timeout=_TIMEOUT)
+    except urllib.error.HTTPError as e:
+        body = ""
+        try:
+            body = e.read().decode("utf-8", "replace")
+        except Exception:
+            pass
+        print(f"[consultcastai] claude HTTP {e.code}: {body}")
+        raise
+    try:
+        for raw_line in response:
+            line = raw_line.decode("utf-8", "replace").strip()
+            if not line.startswith("data:"):
+                continue  # "event: ..." lines and the blank separators; the JSON carries its own type
+            try:
+                event = json.loads(line[5:].strip())
+            except json.JSONDecodeError:
+                continue
+            kind = event.get("type")
+            if kind == "content_block_delta":
+                delta = event.get("delta") or {}
+                if delta.get("type") == "text_delta" and delta.get("text"):
+                    yield delta["text"]
+            elif kind == "error":
+                error = event.get("error") or {}
+                raise RuntimeError(f"Claude stream error: {error.get('type')}: {error.get('message')}")
+    finally:
+        response.close()
+
+
+def stream_persona_reply(system_prompt: str, history: list[dict]):
+    """get_persona_reply, a piece at a time: same prompt, same history, same
+    length limit. Used for avatar sessions, where the reply is spoken as it
+    is generated rather than after it's complete."""
+    return _stream(system_prompt, history, max_tokens=300)
+
+
 def get_persona_reply(system_prompt: str, history: list[dict]) -> str:
     """history is the full conversation, oldest first, roles user/assistant.
     The opener (assistant's first line) is part of history already."""
