@@ -411,6 +411,17 @@
   }
   .mic-btn.live{background:linear-gradient(135deg, var(--danger), var(--purple)); box-shadow:0 0 22px rgba(255,79,109,0.55); border:none;}
   .mic-btn:disabled{opacity:0.3; cursor:not-allowed;}
+  /* "Type instead": stands in for the text box and Send during an avatar
+     session, which is spoken. Outlined rather than filled, so it reads as
+     the secondary way in next to the microphone. */
+  .type-btn{
+    width:38px; height:38px; border-radius:50%; flex:none; padding:0; cursor:pointer;
+    display:inline-flex; align-items:center; justify-content:center;
+    background:transparent; border:1px solid var(--border); color:var(--text-dim);
+  }
+  .type-btn:hover{border-color:var(--border-bright); color:var(--text);}
+  .type-btn:disabled{opacity:0.3; cursor:not-allowed;}
+  .type-btn svg{width:20px; height:20px; display:block;}
 
   .coach-panel{position:sticky; top:20px; padding:18px; max-height:calc(100vh - 40px); overflow-y:auto; display:flex; flex-direction:column; gap:12px;}
   .coach-title-row{display:flex; align-items:center; gap:8px; font-family:var(--font-display); font-size:17px; font-weight:700;}
@@ -609,6 +620,7 @@
     /* thumb-sized controls */
     .profile-avatar{width:40px; height:40px;}
     .ctl, .mic-btn, .btn-uniform, .composer input{min-height:44px;}
+    .type-btn{width:44px; height:44px;}
     select{min-height:44px;}
   }
 </style>
@@ -836,6 +848,14 @@
       </div>
       <div class="composer">
         <button class="mic-btn" id="micBtn" onclick="toggleMic()" title="Start a session first" disabled>🎙</button>
+        <!-- Avatar sessions only (see syncComposer): shown in place of the
+             text box and Send, which it brings back. -->
+        <button class="type-btn hidden" id="typeInsteadBtn" type="button" onclick="showTypeInstead()" title="Type instead" aria-label="Type instead">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="2.5" y="6" width="19" height="12" rx="2.5"/>
+            <path d="M6 10h.01M9.5 10h.01M13 10h.01M16.5 10h.01M6.5 14.5h11"/>
+          </svg>
+        </button>
         <input id="msgInput" placeholder="Start a session to send a message..." onkeydown="if(event.key==='Enter')sendTurn()" disabled />
         <button class="btn btn-uniform" id="sendBtn" onclick="sendTurn()" disabled>Send</button>
       </div>
@@ -1775,6 +1795,8 @@ let activeTurn = null;                // the turn whose reply is being fetched r
 let lastTurn = null;                  // the latest turn, kept after its reply is fetched: the avatar may still be saying it
 let spokenByCorrelation = {};         // Anam's own account of what the persona has said so far, per reply
 let micDenied = false;                // the browser refused the microphone: typing still works
+let composerEnabled = false;          // a session is live (set by setComposerEnabled)
+let typeInsteadOpen = false;          // avatar session: the text box and Send have been brought back (by the button, or because the microphone failed)
 
 // --- Voice, fixed per persona, no user-facing selector ---
 // Each entry can name an exact Edge-only "Online (Natural)" voice (chosen by
@@ -3305,7 +3327,9 @@ const IS_EDGE = /Edg\//.test(navigator.userAgent);
 async function applyOutputMode(){
   outputMode = (currentPersona && currentPersona.has_avatar) ? 'avatar' : 'voice';
   document.getElementById('browserNote').classList.toggle('hidden', IS_EDGE || outputMode !== 'voice');
+  syncComposer(); // before connecting, so the text box doesn't sit there for the seconds that takes and then vanish
   if(outputMode === 'avatar') await startAvatar();
+  syncComposer(); // again: if the avatar couldn't start, this is a voice session after all
 }
 
 // The live avatar video ONLY ever renders in the center #avatarLive box,
@@ -3345,6 +3369,7 @@ async function startAvatar(){
     client.addListener(AnamEvent.TALK_STREAM_INTERRUPTED, correlationId => { if(client === anamClient) onAnamInterrupted(correlationId); });
     client.addListener(AnamEvent.USER_SPEECH_STARTED, () => { if(client === anamClient) dismissIdlePrompt(); });
     client.addListener(AnamEvent.MIC_PERMISSION_DENIED, () => { if(client === anamClient) onMicDenied(); });
+    client.addListener(AnamEvent.INPUT_AUDIO_STREAM_STARTED, stream => { if(client === anamClient) watchMicrophone(stream); });
     client.addListener(AnamEvent.CONNECTION_CLOSED, (reason, details) => { if(client === anamClient) onAnamClosed(reason, details); });
     await client.streamToVideoElement('avatarVideo');
     if(anamClient !== client){
@@ -3784,8 +3809,39 @@ function syncMicUi(){
     : 'Listening. Click to mute.';
 }
 
+// An avatar session is a spoken conversation, so the text box and Send are
+// put away behind a small "Type instead" button. They come back when that
+// button is pressed, and by themselves if the microphone can't be used,
+// and then stay for the rest of the session. A voice-only session, and the
+// screen before and after a session, always show them.
+function syncComposer(){
+  const tuckedAway = composerEnabled && outputMode === 'avatar' && !typeInsteadOpen;
+  document.getElementById('msgInput').classList.toggle('hidden', tuckedAway);
+  document.getElementById('sendBtn').classList.toggle('hidden', tuckedAway);
+  document.getElementById('typeInsteadBtn').classList.toggle('hidden', !tuckedAway);
+}
+
+window.showTypeInstead = function(){
+  typeInsteadOpen = true;
+  syncComposer();
+  const input = document.getElementById('msgInput');
+  if(!input.disabled) input.focus();
+};
+
+// The microphone was there and then wasn't (unplugged, or taken away by
+// the system). Same position as being refused it: say so, and bring the
+// text box back.
+function watchMicrophone(stream){
+  if(!stream || !stream.getAudioTracks) return;
+  stream.getAudioTracks().forEach(track => track.addEventListener('ended', () => {
+    if(handsFree()) onMicDenied();
+  }));
+}
+
 function onMicDenied(){
   micDenied = true;
+  typeInsteadOpen = true; // typing is now the only way in: don't make them go looking for it
+  syncComposer();
   syncMicUi();
   showSessionNotice("Your microphone isn't available, so the persona can't hear you. Type your responses and press Send. To talk instead, allow the microphone for this site, then press Pause and Resume.");
 }
@@ -3857,6 +3913,7 @@ function setSendBusy(busy){
   document.getElementById('msgInput').disabled = busy;
   const sendBtn = document.getElementById('sendBtn');
   if(sendBtn) sendBtn.disabled = busy;
+  document.getElementById('typeInsteadBtn').disabled = busy; // paused: nothing to type into yet
   // Deliberately does NOT touch the mic button — that's controlled
   // separately by setMicBusy() based on whether Carla is speaking, and
   // touching it here could re-enable it mid-speech, undoing that logic.
@@ -3909,6 +3966,10 @@ window.sendTurn = async function(hintText){
 function setComposerEnabled(enabled){
   const input = document.getElementById('msgInput');
   const mic = document.getElementById('micBtn');
+  composerEnabled = enabled;
+  if(!enabled) typeInsteadOpen = false; // each session starts with the text box put away again
+  document.getElementById('typeInsteadBtn').disabled = !enabled;
+  syncComposer();
   input.disabled = !enabled;
   document.getElementById('sendBtn').disabled = !enabled;
   mic.disabled = !enabled;

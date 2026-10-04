@@ -636,9 +636,12 @@ review. This follows Anam's client-side custom LLM pattern.
    speaking after the first few words. The final event carries the scores
    and the coaching note, which update exactly as they do for a typed turn.
 
-What stays as it was: the text box and Send are still there and go through
-the same path (the avatar answers out loud either way), so typing works as a
-fallback and when the browser refuses the microphone. Time limits, the
+Typing is still there as the fallback and goes through the same path (the
+avatar answers out loud either way). In an avatar session the text box and
+Send are put away behind a small keyboard button, "Type instead", which
+brings them back for the rest of the session; they come back by themselves
+if the browser refuses the microphone or the microphone stops working
+part-way through (`syncComposer`). A voice-only session always shows them. Time limits, the
 warning, the clean end, the idle prompt and the debrief are untouched; a
 persona without an avatar still uses `/turn` and the browser's own speech
 recognition.
