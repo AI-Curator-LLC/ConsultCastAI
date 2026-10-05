@@ -15,9 +15,12 @@
                   it out for an app with one language, and the browser's
                   language is used
 
-   Every link opens in a new tab, like Launch on the suite home, so work
-   in progress here is never navigated away from. With single sign-on on,
-   the other app opens already signed in. */
+   Every link opens in the named tab of the place it leads to (TABS), the
+   same names the suite home uses for Launch: if that tab is already open
+   it is reused and brought to the front, otherwise a new tab is opened
+   with that name. This page is never navigated away from. No noopener on
+   these links: the tabs have to stay tied together to be found by name.
+   With single sign-on on, the other app opens already signed in. */
 (function(){
   const tag = document.currentScript;
   if(!tag) return;
@@ -27,6 +30,8 @@
   const LANG_KEY = tag.dataset.langKey || '';
 
   const SUITE = 'https://aicsuite.ai-curator.ai/index.html';
+  const SUITE_TAB = 'aiccs-command-center';
+  const appTab = key => 'aiccs-' + key;
   // Product names are never translated. The dot colors are the suite's.
   const APPS = [
     { key: 'consultcastai', name: 'ConsultCastAI', url: 'https://consultcastai.ai-curator.ai/', color: '#19d7ff' },
@@ -91,16 +96,22 @@
     menu.setAttribute('role', 'menu');
     menu.hidden = true;
 
-    function link(url, cls){
+    function link(url, tab, cls){
       const a = document.createElement('a');
       a.href = url;
-      a.target = '_blank';
-      a.rel = 'noopener';
+      a.target = tab;
       a.setAttribute('role', 'menuitem');
       if(cls) a.className = cls;
+      // Opened by script so the reused tab can be brought to the front.
+      a.addEventListener('click', (e) => {
+        if(e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+        e.preventDefault();
+        const win = window.open(url, tab);
+        if(win) win.focus();
+      });
       return a;
     }
-    const home = link(SUITE, 'aic-home');
+    const home = link(SUITE, SUITE_TAB, 'aic-home');
     const homeIcon = document.createElement('img');
     homeIcon.src = ICON;
     homeIcon.alt = '';
@@ -111,7 +122,7 @@
     sep.className = 'aic-switch-sep';
     menu.appendChild(sep);
     APPS.filter(app => app.key !== HERE).forEach(app => {
-      const a = link(app.url);
+      const a = link(app.url, appTab(app.key));
       const dot = document.createElement('span');
       dot.className = 'aic-switch-dot';
       dot.style.background = app.color;
