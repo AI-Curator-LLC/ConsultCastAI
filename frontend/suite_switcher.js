@@ -15,12 +15,21 @@
                   it out for an app with one language, and the browser's
                   language is used
 
-   Every link opens in the named tab of the place it leads to (TABS), the
-   same names the suite home uses for Launch: if that tab is already open
-   it is reused and brought to the front, otherwise a new tab is opened
-   with that name. This page is never navigated away from. No noopener on
-   these links: the tabs have to stay tied together to be found by name.
-   With single sign-on on, the other app opens already signed in. */
+   Every link leads to the named tab of its destination, the same names
+   the suite home uses for Launch: if that tab is already open it is
+   brought to the front as it is, not reloaded; otherwise a new tab is
+   opened with that name. This page is never navigated away from. No
+   noopener on these links: the tabs have to stay tied together to be
+   found by name. With single sign-on on, the other app opens already
+   signed in.
+
+   The list itself is shown in a frame served by the suite
+   (menu/apps.html there). A browser lets a page switch to a tab by name
+   only when its own address opened that tab or shares its address, so
+   from this app's address another app's tab cannot be reached and a
+   second copy would open. From the suite's address every tab can. The
+   links this file draws are the fallback: they show until the frame says
+   it is ready, and stay if it never loads. */
 (function(){
   const tag = document.currentScript;
   if(!tag) return;
@@ -30,6 +39,8 @@
   const LANG_KEY = tag.dataset.langKey || '';
 
   const SUITE = 'https://aicsuite.ai-curator.ai/index.html';
+  const SUITE_ORIGIN = new URL(SUITE).origin;
+  const SUITE_MENU = SUITE_ORIGIN + '/menu/apps.html';
   const SUITE_TAB = 'aiccs-command-center';
   const appTab = key => 'aiccs-' + key;
   // Product names are never translated. The dot colors are the suite's.
@@ -71,6 +82,8 @@
 .aic-switch-menu a.aic-home img{width:18px;height:18px;flex:none;}
 .aic-switch-sep{height:1px;margin:5px 6px;background:#252b54;}
 .aic-switch-dot{width:9px;height:9px;border-radius:50%;flex:none;margin:0 5px 0 4px;}
+.aic-switch-frame{display:block;width:100%;height:132px;border:0;border-radius:8px;background:#10142b;}
+.aic-switch-frame[hidden],.aic-switch-own[hidden]{display:none;}
 `;
 
   function build(){
@@ -102,25 +115,37 @@
       a.target = tab;
       a.setAttribute('role', 'menuitem');
       if(cls) a.className = cls;
-      // Opened by script so the reused tab can be brought to the front.
       a.addEventListener('click', (e) => {
         if(e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
         e.preventDefault();
-        const win = window.open(url, tab);
-        if(win) win.focus();
+        show(url, tab);
       });
       return a;
     }
+    // The tab with this name, brought to the front as it is. If there is
+    // none the browser hands back a new blank one, and that is sent to url.
+    function show(url, tab){
+      let win = window.open('', tab);
+      if(!win) return;
+      let fresh = false;
+      try{ fresh = win.location.href === 'about:blank'; }catch(_){ /* the page already open there */ }
+      if(fresh) win = window.open(url, tab) || win;
+      win.focus();
+    }
+    // This file's own links, the fallback for the suite's frame.
+    const own = document.createElement('div');
+    own.className = 'aic-switch-own';
+    menu.appendChild(own);
     const home = link(SUITE, SUITE_TAB, 'aic-home');
     const homeIcon = document.createElement('img');
     homeIcon.src = ICON;
     homeIcon.alt = '';
     const homeText = document.createElement('span');
     home.append(homeIcon, homeText);
-    menu.appendChild(home);
+    own.appendChild(home);
     const sep = document.createElement('div');
     sep.className = 'aic-switch-sep';
-    menu.appendChild(sep);
+    own.appendChild(sep);
     APPS.filter(app => app.key !== HERE).forEach(app => {
       const a = link(app.url, appTab(app.key));
       const dot = document.createElement('span');
@@ -128,7 +153,31 @@
       dot.style.background = app.color;
       dot.style.boxShadow = '0 0 10px ' + app.color;
       a.append(dot, document.createTextNode(app.name));
-      menu.appendChild(a);
+      own.appendChild(a);
+    });
+
+    // The same list, served by the suite. It takes over once it says it is
+    // ready; only the suite's page inside this frame is listened to.
+    const frame = document.createElement('iframe');
+    frame.className = 'aic-switch-frame';
+    frame.hidden = true;
+    frame.src = SUITE_MENU + '?app=' + encodeURIComponent(HERE) + '&lang=' + lang();
+    menu.appendChild(frame);
+    let framed = false;
+    window.addEventListener('message', (e) => {
+      if(e.origin !== SUITE_ORIGIN || e.source !== frame.contentWindow || !e.data) return;
+      if(e.data.type === 'aiccs:menu-ready'){
+        frame.hidden = false;
+        own.hidden = true;
+        framed = true;
+      }else if(e.data.type === 'aiccs:menu-size'){
+        // It measures itself once the menu is open; a closed menu has no size.
+        const height = Number(e.data.height);
+        if(height > 0 && height < 600) frame.style.height = height + 'px';
+      }else if(e.data.type === 'aiccs:menu-close'){
+        close();
+        if(e.data.focus) btn.focus();
+      }
     });
 
     // Worded in the app's current language each time it is shown, so a
@@ -138,6 +187,8 @@
       homeText.textContent = text.home;
       btn.title = text.label;
       btn.setAttribute('aria-label', text.label);
+      frame.title = text.label;
+      if(framed) frame.contentWindow.postMessage({ type: 'aiccs:menu-lang', lang: lang() }, SUITE_ORIGIN);
     }
     function close(){
       menu.hidden = true;
