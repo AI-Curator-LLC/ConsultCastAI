@@ -89,7 +89,8 @@ def alive(jti: str | None, user_id: str, ask_suite: bool) -> bool:
     # keep that up to date too, so a plan that ended at the suite stops
     # counting here within one recheck (users.note_suite_plan).
     if "apps" in answer:
-        users.note_suite_plan(user_id, answer.get("apps"), bool(answer.get("email_verified")))
+        users.note_suite_plan(user_id, answer.get("apps"), bool(answer.get("email_verified")),
+                              complimentary_minutes=answer.get("complimentary_minutes") if answer.get("complimentary") else None)
     return True
 
 

@@ -227,7 +227,8 @@ def paid_plan(account: users.User | None) -> dict | None:
     - a team member (the owner included): the team's plan, one pool for the
       whole team, kept under the team's id;
     - an account with its own active subscription: Pro, its own pool;
-    - an account covered by the suite's plan: Pro, its own pool."""
+    - an account covered by the suite's plan: Pro, its own pool. A
+      complimentary one draws on the monthly minutes the suite set for it."""
     if account is None:
         return None
     if account.team_id:
@@ -239,7 +240,13 @@ def paid_plan(account: users.User | None) -> dict | None:
                 "via_suite": False, "is_team_member": not is_owner, "may_buy": is_owner}
     own = users.subscription_active(account)
     if own or suite_pro(account):
-        return {"plan": "pro", "pool_id": account.id, "pool_kind": "user", "included_sec": PRO_INCLUDED_SEC,
+        # A complimentary suite account has its own monthly minutes, set at
+        # the suite (users.note_suite_plan); a subscription of its own here
+        # comes first and brings Pro's.
+        included = PRO_INCLUDED_SEC
+        if not own and account.suite_minutes:
+            included = account.suite_minutes * 60
+        return {"plan": "pro", "pool_id": account.id, "pool_kind": "user", "included_sec": included,
                 "via_suite": not own, "is_team_member": False, "may_buy": True}
     return None
 

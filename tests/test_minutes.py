@@ -528,9 +528,9 @@ print("ok 13 records written before this change read exactly as before")
 suite.switch(True)
 
 
-def sso_login(email, sid, apps, verified=True):
+def sso_login(email, sid, apps, verified=True, **more):
     suite.codes["code-" + sid] = {"suite_user_id": "suite-" + email, "email": email, "name": "Sam Suite", "lang": "en",
-                                  "email_verified": verified, "sid": sid, "apps": apps, "is_admin": False}
+                                  "email_verified": verified, "sid": sid, "apps": apps, "is_admin": False, **more}
     r = client.post("/sso/exchange", json={"code": "code-" + sid, "code_verifier": "v"})
     assert r.status_code == 200, r.text
     return r.json()["token"]
@@ -564,6 +564,22 @@ guest = sso_login("guest@example.com", "sid-guest-1", ALL, verified=False)      
 assert users.get_user_by_email("guest@example.com").suite_plan is False
 plain = sso_login("plain@example.com", "sid-plain-1", ["consultcastai"])          # no Suite plan: an ordinary trial
 assert me(plain)["trial"]["remaining_sec"] == 600 and me(plain)["paid_minutes"] is None
+# A complimentary suite account: Pro, with the monthly minutes the suite set for it.
+comp = sso_login("comp@example.com", "sid-comp-1", ALL, complimentary=True, complimentary_minutes=60)
+paid = me(comp)["paid_minutes"]
+assert paid["plan"] == "pro" and paid["via_suite"] is True and paid["included_sec"] == 3600 and paid["remaining_sec"] == 3600
+assert practice(comp, 30 * MIN)["paid_minutes"]["remaining_sec"] == 30 * MIN
+assert practice(comp, 30 * MIN)["paid_minutes"]["exhausted"] is True          # the month's 60 are used
+assert client.post("/sessions", json={}, headers=bearer(comp)).status_code == 402
+comp = sso_login("comp@example.com", "sid-comp-2", ALL, complimentary=True, complimentary_minutes=90)   # raised at the suite
+assert me(comp)["paid_minutes"]["included_sec"] == 5400 and me(comp)["paid_minutes"]["remaining_sec"] == 30 * MIN
+comp = sso_login("comp@example.com", "sid-comp-3", ALL, complimentary=False, complimentary_minutes=None)  # a paid Suite plan now
+assert me(comp)["paid_minutes"]["included_sec"] == 7200
+comp = sso_login("comp@example.com", "sid-comp-4", [], complimentary=False)                              # ended, no plan
+assert me(comp)["paid_minutes"] is None and users.get_user_by_email("comp@example.com").suite_minutes is None
+odd = sso_login("odd@example.com", "sid-odd-1", ALL, complimentary=True, complimentary_minutes="lots")   # not a number: Pro's minutes
+assert me(odd)["paid_minutes"]["included_sec"] == 7200
+print("ok 14b a complimentary suite account is capped at the monthly minutes the suite set")
 suite.switch(False)
 print("ok 14 a person on the suite's plan is Pro here with Pro's 120 minutes; lost when the plan or the answer lapses")
 

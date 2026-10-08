@@ -104,6 +104,11 @@ class User:
     # the time of that answer, so an old answer stops counting on its own.
     suite_plan: bool = False
     suite_plan_checked_at: str | None = None  # ISO-8601 UTC
+    # A complimentary suite account (given by the suite's administrator, no
+    # subscription) comes with its own monthly minutes, set at the suite and
+    # written with every answer like suite_plan. None for everyone else:
+    # the plan's usual minutes apply (minutes.paid_plan).
+    suite_minutes: int | None = None
 
 
 # --- passwords -------------------------------------------------------------
@@ -267,6 +272,7 @@ _ADDED_COLUMNS = [
     # said so (see User.suite_plan).
     ("suite_plan", "BOOLEAN NOT NULL DEFAULT FALSE"),
     ("suite_plan_checked_at", "TEXT"),
+    ("suite_minutes", "INTEGER"),
 ]
 
 # Which emails have already had a trial (see the "trial records" section
@@ -482,6 +488,7 @@ def _row_to_user(row) -> User | None:
         suspended=bool(row["suspended"]),
         suite_plan=bool(row["suite_plan"]),
         suite_plan_checked_at=row["suite_plan_checked_at"],
+        suite_minutes=row["suite_minutes"],
     )
 
 
@@ -527,7 +534,8 @@ def set_suite_user_id(user_id: str, suite_user_id: str) -> None:
 _SUITE_PLAN_MARK = "suite"
 
 
-def note_suite_plan(user_id: str, apps, email_verified: bool, now: datetime | None = None) -> None:
+def note_suite_plan(user_id: str, apps, email_verified: bool, now: datetime | None = None,
+                    complimentary_minutes=None) -> None:
     """Records what the suite just said about this person's plan. `apps` is
     the list the suite answers with, or None when the suite could not check
     (its payment provider was unreachable): then nothing is written and the
@@ -535,13 +543,19 @@ def note_suite_plan(user_id: str, apps, email_verified: bool, now: datetime | No
 
     Only the Suite plan itself counts, and only for an address the suite
     has confirmed: otherwise signing up at the suite with a Suite
-    customer's address would be enough to take their plan."""
+    customer's address would be enough to take their plan.
+
+    `complimentary_minutes` is the month's minutes the suite set for a
+    complimentary account, None for anyone else. It is written with the
+    same answer, so ending the complimentary access at the suite, or
+    changing the figure there, reaches this account at the next recheck."""
     if not isinstance(apps, (list, tuple)):
         return
     has_plan = bool(email_verified) and _SUITE_PLAN_MARK in apps
+    minutes = complimentary_minutes if has_plan and type(complimentary_minutes) is int and complimentary_minutes > 0 else None
     _run(
-        "UPDATE users SET suite_plan = ?, suite_plan_checked_at = ? WHERE id = ?",
-        (has_plan, (now or datetime.now(timezone.utc)).isoformat(), user_id),
+        "UPDATE users SET suite_plan = ?, suite_plan_checked_at = ?, suite_minutes = ? WHERE id = ?",
+        (has_plan, (now or datetime.now(timezone.utc)).isoformat(), minutes, user_id),
     )
 
 

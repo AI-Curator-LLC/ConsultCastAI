@@ -300,7 +300,8 @@ def sso_exchange(req: SsoExchangeRequest, background_tasks: BackgroundTasks):
         users.mark_verified(user.id)
     # What the person's suite plan includes, as of this sign-in. The Suite
     # plan itself makes the account Pro here (minutes.suite_pro).
-    users.note_suite_plan(user.id, person.get("apps"), bool(person.get("email_verified")), minutes.now_utc())
+    users.note_suite_plan(user.id, person.get("apps"), bool(person.get("email_verified")), minutes.now_utc(),
+                          complimentary_minutes=person.get("complimentary_minutes") if person.get("complimentary") else None)
     user = _apply_team_invite(users.get_user_by_id(user.id), req.invite_token)
     try:
         token = users.issue_token(user, sso_jti=sso_sessions.create(user.id, person["sid"]))
