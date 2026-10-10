@@ -171,6 +171,14 @@ PERSONAS: dict[str, Persona] = {
             "anti-AI, just anti-being-sold-something-she-already-has. Responds "
             "well to being shown something specific she hasn't seen."
         ),
+        # From Anam's stock library via the Persona builder (persona
+        # 2abad9bf-d80b-5711-b25d-8ce421bb2871): stock avatar "Zara", stock
+        # voice "Sophie - Legacy". As with Tom, the avatar ID is the
+        # persona's `avatar.id` from GET /v1/personas/{id}, and the persona
+        # itself (with its own prompt and Anam LLM) is not used for sessions.
+        avatar_id="d407ae83-7b53-4988-b4f9-0b1c8243bac9",
+        voice_id="c30f84e2-eb31-4611-8c75-64e606c51eb3",
+        avatar_model="cara-4",
         industry="ecommerce",
         difficulty="Medium",
         trait_tags=[

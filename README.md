@@ -611,7 +611,7 @@ The frontend uses the browser's built-in Web Speech API (`SpeechRecognition`
 for mic input, `speechSynthesis` for the persona's voice) as the zero-setup
 fallback for any persona without a published Anam avatar. A persona with
 `avatar_id`/`voice_id`/`avatar_model` set in `content.py` (currently
-`carla_diaz`, `harold_bennett`, `dr_owens` and `tom_walsh`) gets the live Anam avatar automatically instead
+every persona except `monica_reyes`) gets the live Anam avatar automatically instead
 — no manual mode picker, `applyOutputMode()` decides per persona (see
 `/personas`' `has_avatar` field).
 
