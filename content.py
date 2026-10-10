@@ -196,6 +196,14 @@ PERSONAS: dict[str, Persona] = {
             "Will shut a conversation down fast if she senses risk without a "
             "clear compliance answer."
         ),
+        # From Anam's stock library via the Persona builder (persona
+        # 0498eb5a-5877-53eb-9f8c-f73828505cec): stock avatar "Nour", stock
+        # voice "Sophie". As with Tom, the avatar ID is the persona's
+        # `avatar.id` from GET /v1/personas/{id}, and the persona itself
+        # (with its own prompt and Anam LLM) is not used for sessions.
+        avatar_id="7c502c6c-cd62-401b-bec7-765d32a0769a",
+        voice_id="1c6fa8a7-9aa4-4a17-a75e-3e5eb863fccf",
+        avatar_model="cara-4",
         industry="dental",
         difficulty="Hard",
         trait_tags=[
