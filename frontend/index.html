@@ -170,6 +170,49 @@
   }
   select:focus{outline:none; border-color:var(--border-bright);}
   select:disabled{opacity:0.4; cursor:not-allowed;}
+
+  /* Persona picker with a "Live Avatar" pill on the personas that have one.
+     A native <option> can hold only plain text, so the pill needs the
+     browser's styled dropdown (appearance:base-select, Chrome and Edge 135+);
+     populatePersonaSelect() adds .rich only where that exists, and elsewhere
+     the select stays native with a camera in the option's text. */
+  .avatar-pill{
+    display:inline-flex; align-items:center; gap:5px; flex:none; white-space:nowrap;
+    font-family:var(--font-body); font-size:9.5px; font-weight:700; letter-spacing:0.6px; text-transform:uppercase; line-height:1.2;
+    padding:2px 8px 2px 6px; border-radius:99px; color:#e9edff;
+    background:linear-gradient(135deg, rgba(91,127,255,0.30), rgba(155,92,255,0.30));
+    border:1px solid rgba(124,155,255,0.65);
+    box-shadow:0 0 10px rgba(91,127,255,0.45), inset 0 0 6px rgba(155,92,255,0.30);
+  }
+  .avatar-pill svg{width:12px; height:12px; display:block; color:var(--cyan);}
+  select.rich, select.rich::picker(select){appearance:base-select;}
+  select.rich{align-items:center; line-height:15px;} /* the line height a native select uses at this size, so both kinds are equally tall */
+  select.rich::picker-icon{display:none;} /* the arrow is the background image, as on every other select */
+  select.rich > button{display:contents;}
+  /* The closed box: name and pill. The role is in the list and on the card just below. */
+  select.rich selectedcontent{display:flex; align-items:center; flex:1; min-width:0; overflow:hidden; white-space:nowrap;}
+  select.rich selectedcontent .opt-line{min-width:0;}
+  select.rich selectedcontent .opt-name{overflow:hidden; text-overflow:ellipsis;}
+  select.rich selectedcontent .opt-role{display:none;}
+  select.rich selectedcontent .avatar-pill{padding-top:0; padding-bottom:0;} /* keeps this box the height of the other selects */
+  select.rich::picker(select){
+    max-width:calc(100vw - 16px); /* on a phone the list is wider than the box it opens from, never wider than the screen */
+    margin:6px 0; padding:6px; border-radius:12px; color:var(--text);
+    background:var(--bg-panel-2); border:1px solid var(--border-bright);
+    box-shadow:0 18px 50px rgba(0,0,0,0.65), 0 0 26px rgba(91,127,255,0.16);
+  }
+  select.rich option{
+    display:flex; flex-direction:column; align-items:flex-start; gap:3px;
+    padding:9px 11px; border-radius:8px; cursor:pointer; font-size:13.5px; color:var(--text); background:transparent;
+    white-space:normal;
+  }
+  select.rich option::checkmark{display:none;}
+  select.rich option:hover, select.rich option:focus-visible{background:rgba(91,127,255,0.14); outline:none;}
+  select.rich option:checked{background:rgba(155,92,255,0.16);}
+  select.rich option[value=""]{color:var(--text-dim);}
+  .opt-line{display:flex; align-items:center; gap:8px;}
+  .opt-name{font-weight:600;}
+  .opt-role{display:block; font-size:12px; color:var(--text-dim); line-height:1.35;}
   .field-label{font-family:var(--font-mono); font-size:10px; text-transform:uppercase; letter-spacing:1.5px; color:var(--text-faint); margin-bottom:6px; display:block;}
   .field{margin-bottom:14px;}
 
@@ -622,6 +665,7 @@
     .ctl, .mic-btn, .btn-uniform, .composer input{min-height:44px;}
     .type-btn{width:44px; height:44px;}
     select{min-height:44px;}
+    select.rich option{min-height:44px; justify-content:center;}
   }
 </style>
 </head>
@@ -3056,10 +3100,31 @@ async function loadPersonas(){
   }
 }
 
+// Whether the browser can draw styled dropdown options (see .avatar-pill in
+// the CSS). Where it can't, the picker is the plain native select.
+const RICH_SELECT = !!(window.CSS && CSS.supports && CSS.supports('appearance', 'base-select') && window.HTMLSelectedContentElement);
+const AVATAR_PILL = '<span class="avatar-pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="6" width="13" height="12" rx="2.5"/><path d="M15.5 10.5l6-3.5v10l-6-3.5z"/></svg>Live Avatar</span>';
+
+// Personas with a live avatar come first and carry the pill; the rest
+// follow in the order the server sent them, with nothing added. Both come
+// from each persona's has_avatar in /personas, so giving a persona an
+// avatar in content.py is all it takes: nothing here names a persona.
 function populatePersonaSelect(){
   const select = document.getElementById('personaSelect');
+  const ordered = [...personas].sort((a, b) => Number(!!b.has_avatar) - Number(!!a.has_avatar)); // stable: ties keep their order
+  select.classList.toggle('rich', RICH_SELECT);
+  if(RICH_SELECT){
+    select.innerHTML = '<button><selectedcontent></selectedcontent></button><option value="">Choose a persona…</option>' +
+      ordered.map(p => `<option value="${escapeHtml(p.id)}"><span class="opt-line"><span class="opt-name">${escapeHtml(p.name)}</span> ${p.has_avatar ? AVATAR_PILL : ''}</span> <span class="opt-role">${escapeHtml(p.role)}</span></option>`).join('');
+    return;
+  }
   select.innerHTML = '<option value="">Choose a persona…</option>' +
-    personas.map(p => `<option value="${p.id}">${p.name}, ${p.role}</option>`).join('');
+    ordered.map(p => {
+      const text = escapeHtml(`${p.name}, ${p.role}`);
+      return p.has_avatar
+        ? `<option value="${escapeHtml(p.id)}" aria-label="${text}, live avatar">🎥 ${text}</option>`
+        : `<option value="${escapeHtml(p.id)}">${text}</option>`;
+    }).join('');
 }
 
 window.onPersonaChange = function(){
