@@ -691,7 +691,7 @@ pages, checked October 2026; confirm against your own plan):
   10 on Explorer, 2 hours on Growth and Professional) and a number of
   simultaneous sessions (1, 1, 3, 5, 10). This deploy is on Explorer: 10
   minutes, 3 at a time. Avatar sessions here end themselves at
-  `AVATAR_SESSION_MINUTES` (10) so Anam's cut-off is never reached; see
+  `AVATAR_SESSION_MINUTES` (9.5, under Anam's 10) so Anam's cut-off is never reached; see
   "Cost controls for live avatar sessions". Past the concurrency limit,
   starting an avatar fails and the session falls back to voice.
 - Streaming means a reply that's interrupted stops being generated, so
@@ -714,16 +714,18 @@ track of real elapsed time. A `visibilitychange` listener forces that check
 immediately on wake, rather than waiting on a `setInterval` tick the browser
 may have throttled or suspended entirely while hidden.
 
-- **Avatar session limit** (`AVATAR_SESSION_MINUTES`, 10): ends an avatar
+- **Avatar session limit** (`AVATAR_SESSION_MINUTES`, 9.5): ends an avatar
   session automatically through the exact same path as clicking End
-  yourself, so it finishes with a normal debrief, with a one-time warning
-  `AVATAR_WARNING_SECONDS` (60) before: at 9:00 and 10:00 by default. It
-  applies on every plan, to avatar sessions only; a voice-only session has
-  no such limit. It exists because Anam closes a connection at its plan's
-  maximum session length (10 minutes on Explorer), mid-sentence and with no
-  debrief; this hangs up cleanly first.
+  yourself, so it finishes with a normal debrief, with a one-time "session
+  ending soon" warning `AVATAR_WARNING_SECONDS` (60) before: at 8:30 and
+  9:30 by default. It applies on every plan, to avatar sessions only; a
+  voice-only session has no such limit. It exists because Anam closes a
+  connection at its plan's maximum session length (10 minutes on Explorer),
+  mid-sentence and with no debrief; this hangs up cleanly first. It is kept
+  under Anam's maximum, never at it: at the same figure the two race and
+  Anam sometimes wins (a background tab runs its timers late).
   - **To change it** (after upgrading the Anam plan, say to Growth's 2
-    hours): set `AVATAR_SESSION_MINUTES` on `consultcastai-api`, in
+    hours, set 119): set `AVATAR_SESSION_MINUTES` on `consultcastai-api`, in
     `render.yaml` or in the Render dashboard under Environment. The service
     restarts and sessions started after that use the new figure. Nothing in
     the frontend changes: the limit and the warning time are sent with each

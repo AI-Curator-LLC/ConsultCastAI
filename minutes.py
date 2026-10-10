@@ -51,12 +51,15 @@ TRIAL_TURN_GRACE_SEC = int(os.environ.get("TRIAL_TURN_GRACE_SECONDS", "10"))
 
 # Avatar sessions, on every plan. Anam (the avatar service) closes a
 # connection at its own plan's maximum session length, mid-sentence and
-# without a debrief; this ends the session cleanly just before that. Set it
-# to the Anam plan's maximum: 10 minutes on Explorer, 120 on Growth and
-# Professional. It limits one sitting, not the month: minutes are still
+# without a debrief; this ends the session cleanly, with a warning and the
+# debrief, before Anam can. So it is set a little UNDER the Anam plan's
+# maximum, never at it: at the same figure the two race and Anam sometimes
+# wins. Explorer's maximum is 10 minutes, so 9.5 here; after upgrading to
+# Growth or Professional (2 hours) set it to 119. Decimals are fine: the
+# value is minutes. It limits one sitting, not the month: minutes are still
 # counted against the trial or the plan as usual. Voice-only sessions are
 # not affected.
-AVATAR_SESSION_SEC = int(os.environ.get("AVATAR_SESSION_MINUTES", "10")) * 60
+AVATAR_SESSION_SEC = int(round(float(os.environ.get("AVATAR_SESSION_MINUTES", "9.5")) * 60))
 AVATAR_WARNING_SEC = int(os.environ.get("AVATAR_WARNING_SECONDS", "60"))
 
 

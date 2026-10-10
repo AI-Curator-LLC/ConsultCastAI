@@ -127,13 +127,14 @@ services:
         value: "60"
       # Avatar sessions, on every plan: the longest one sitting can run, and
       # how long before that the warning shows. Anam closes a connection at
-      # its own plan's maximum session length, so keep this at that maximum:
-      # 10 on Explorer, 120 on Growth or Professional. After upgrading Anam,
-      # change AVATAR_SESSION_MINUTES here or in the Render dashboard
+      # its own plan's maximum session length, mid-sentence, so keep this a
+      # little UNDER that maximum, never at it: 9.5 on Explorer (10), 119 on
+      # Growth or Professional (120). Decimals are minutes. After upgrading
+      # Anam, change AVATAR_SESSION_MINUTES here or in the Render dashboard
       # (Environment); the service restarts and new sessions use it. Nothing
       # else needs to change. Voice-only sessions are not affected.
       - key: AVATAR_SESSION_MINUTES
-        value: "10"
+        value: "9.5"
       - key: AVATAR_WARNING_SECONDS
         value: "60"
       # Paid minutes (see minutes.py and README's "Paid minutes and

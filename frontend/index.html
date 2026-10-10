@@ -1332,7 +1332,7 @@ const TIME_RED_AT_SEC = 13 * 60;
 // server with each session (AVATAR_SESSION_MINUTES and
 // AVATAR_WARNING_SECONDS, see minutes.avatar_limit), so they're changed in
 // Render, not here. These are only what's used if the server sends none.
-let avatarLimitSec = 10 * 60;
+let avatarLimitSec = 9.5 * 60;
 let avatarWarningSec = 60;
 // IDLE: no real speech captured and no message sent for this long shows a
 // "still there?" prompt; GRACE is how long after that prompt before an
@@ -1427,18 +1427,21 @@ function checkCostControls(elapsedSec){
   }
 }
 
-function avatarLimitMinutes(){
-  return Math.round(avatarLimitSec / 60);
+// The avatar limit as people read it: "9:30", or "10 minutes" when it is
+// a whole number of minutes.
+function avatarLimitLabel(){
+  const mins = Math.floor(avatarLimitSec / 60), secs = Math.round(avatarLimitSec % 60);
+  return secs ? `${mins}:${String(secs).padStart(2, '0')}` : `${mins} minute${mins === 1 ? '' : 's'}`;
 }
 
 function avatarWarningText(secondsLeft){
   const mins = Math.round(secondsLeft / 60);
-  const left = secondsLeft >= 60 ? `${mins} minute${mins === 1 ? '' : 's'}` : 'Less than a minute';
-  return `${left} left in this avatar session. It will end automatically at the ${avatarLimitMinutes()}-minute mark, with your debrief.`;
+  const left = secondsLeft >= 60 ? `About ${mins} minute${mins === 1 ? '' : 's'}` : `${Math.max(0, Math.round(secondsLeft))} seconds`;
+  return `Session ending soon: ${left} left. Avatar sessions end at ${avatarLimitLabel()}. Wrap up now; your debrief follows.`;
 }
 
 function avatarEndText(){
-  return `Avatar sessions are limited to ${avatarLimitMinutes()} minutes, so this one has ended. Your debrief is below.`;
+  return `Session ended: avatar sessions end at ${avatarLimitLabel()}. Your debrief is below.`;
 }
 
 function trialWarningSec(){

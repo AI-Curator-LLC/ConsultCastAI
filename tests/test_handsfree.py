@@ -349,7 +349,7 @@ import subprocess  # noqa: E402
 
 assert content.get_persona(PERSONA).avatar_id                         # the persona used throughout has an avatar
 r = client.post("/sessions", json={"persona_id": PERSONA, "scenario_id": SCENARIO}, headers=bearer(cy))
-assert r.json()["avatar_limit"] == {"session_limit_sec": 600, "warning_sec": 60}      # 10 minutes, warning 1 minute before
+assert r.json()["avatar_limit"] == {"session_limit_sec": 570, "warning_sec": 60}      # 9:30, under Anam's 10, warning 1 minute before
 assert r.json()["time_limit_sec"] != 600                              # and it is not the minutes limit: Pro's month is untouched
 voice_only = next(p for p in content.PERSONAS if not content.get_persona(p).avatar_id)
 voice_scenario = next(sc.id for sc in content.list_active_scenarios() if sc.persona_id == voice_only)
@@ -361,6 +361,6 @@ out = subprocess.run(
     env={**os.environ, "AVATAR_SESSION_MINUTES": "120", "AVATAR_WARNING_SECONDS": "300"},
 )
 assert out.stdout.strip() == "{'session_limit_sec': 7200, 'warning_sec': 300}", out.stdout + out.stderr
-print("ok 12 an avatar session carries its 10-minute limit and 1-minute warning; both come from environment variables; voice-only has none")
+print("ok 12 an avatar session carries its 9:30 limit and 1-minute warning; both come from environment variables; voice-only has none")
 
 print("\nALL PASSED")
