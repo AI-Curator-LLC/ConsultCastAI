@@ -130,6 +130,15 @@ PERSONAS: dict[str, Persona] = {
             "Cares about liability and client confidentiality above everything "
             "else. Will not be rushed and enjoys finding the flaw in an argument."
         ),
+        # From Anam's stock library via the Persona builder (persona
+        # 3742ecc4-3342-59e2-a832-f0320624ec78): stock avatar "Richard"
+        # (table variant), stock voice "Gabriel". As with Tom, the avatar ID
+        # is the persona's `avatar.id` from GET /v1/personas/{id}, and the
+        # persona itself (with its own prompt and Anam LLM) is not used for
+        # sessions.
+        avatar_id="19d18eb0-5346-4d50-a77f-26b3723ed79d",
+        voice_id="8246d9f7-827e-4a5c-8697-644ce860ca02",
+        avatar_model="cara-4",
         industry="legal",
         difficulty="Hard",
         trait_tags=[
