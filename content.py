@@ -296,12 +296,13 @@ PERSONAS: dict[str, Persona] = {
             "survive a compliance review before she believes it."
         ),
         # From Anam's stock library via the Persona builder (persona
-        # d1ffde27-4031-5042-8280-8b14a7ee23a9): stock avatar "Mina", stock
+        # d1ffde27-4031-5042-8280-8b14a7ee23a9): stock avatar "Yasmin", stock
         # voice "Rachel - Polished Presence". As with Tom, the avatar ID is
         # the persona's `avatar.id` from GET /v1/personas/{id}, and the
         # persona itself (with its own prompt and Anam LLM) is not used for
-        # sessions.
-        avatar_id="65bdc796-f739-47fe-9a48-1134dc3ddae4",
+        # sessions. Changing the avatar on the persona in Anam does not
+        # change it here: look the ID up again and replace it.
+        avatar_id="7d2b41a0-e2b5-44e8-827b-2f9b94a9086c",
         voice_id="90a1acd3-4fc0-11f1-84b0-52bacf74fa75",
         avatar_model="cara-4",
         industry="wealth_management",
