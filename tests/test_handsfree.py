@@ -351,9 +351,14 @@ assert content.get_persona(PERSONA).avatar_id                         # the pers
 r = client.post("/sessions", json={"persona_id": PERSONA, "scenario_id": SCENARIO}, headers=bearer(cy))
 assert r.json()["avatar_limit"] == {"session_limit_sec": 570, "warning_sec": 60}      # 9:30, under Anam's 10, warning 1 minute before
 assert r.json()["time_limit_sec"] != 600                              # and it is not the minutes limit: Pro's month is untouched
-voice_only = next(p for p in content.PERSONAS if not content.get_persona(p).avatar_id)
+voice_only = next(p for p in content.PERSONAS if p != PERSONA)
 voice_scenario = next(sc.id for sc in content.list_active_scenarios() if sc.persona_id == voice_only)
-r = client.post("/sessions", json={"persona_id": voice_only, "scenario_id": voice_scenario}, headers=bearer(cy))
+voice_persona = content.get_persona(voice_only)                       # every persona has an avatar now, so take one's away for this check
+had_avatar, voice_persona.avatar_id = voice_persona.avatar_id, ""
+try:
+    r = client.post("/sessions", json={"persona_id": voice_only, "scenario_id": voice_scenario}, headers=bearer(cy))
+finally:
+    voice_persona.avatar_id = had_avatar
 assert r.status_code == 200 and r.json()["avatar_limit"] is None      # a voice-only session has no such limit
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 out = subprocess.run(
