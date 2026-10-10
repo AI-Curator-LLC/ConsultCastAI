@@ -610,10 +610,22 @@ the tab without ending isn't charged.
 The frontend uses the browser's built-in Web Speech API (`SpeechRecognition`
 for mic input, `speechSynthesis` for the persona's voice) as the zero-setup
 fallback for any persona without a published Anam avatar. A persona with
-`avatar_id`/`voice_id`/`avatar_model` set in `content.py` (currently only
-`carla_diaz`) gets the live Anam avatar automatically instead — no manual
-mode picker, `applyOutputMode()` decides per persona (see `/personas`'
-`has_avatar` field).
+`avatar_id`/`voice_id`/`avatar_model` set in `content.py` (currently
+`carla_diaz` and `tom_walsh`) gets the live Anam avatar automatically instead
+— no manual mode picker, `applyOutputMode()` decides per persona (see
+`/personas`' `has_avatar` field).
+
+**Adding an avatar built in Anam's Persona builder.** The builder gives a
+persona ID and a voice ID but shows no avatar ID. Don't mint tokens with the
+persona ID: `personaConfig.personaId` is accepted by Anam, but it cannot be
+combined with `llmId`, so the session runs the persona's own Anam LLM and it
+answers alongside Claude. Look the avatar up instead and use the same three
+fields as every other persona:
+
+    GET https://api.anam.ai/v1/personas/{persona_id}
+    -> avatar.id   -> avatar_id
+    -> voice.id    -> voice_id
+    -> avatarModel -> avatar_model
 
 ### Hands-free avatar sessions
 

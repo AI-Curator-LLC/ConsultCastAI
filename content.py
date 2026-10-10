@@ -229,6 +229,15 @@ PERSONAS: dict[str, Persona] = {
             "Measures everything in hours saved or hours wasted. Suspicious of "
             "anything that sounds like it needs 'training' to use."
         ),
+        # Built in Anam's Persona builder (persona 02832c42-aed4-4861-95aa-
+        # c2d58650bec2), which shows no avatar ID. It is that persona's
+        # `avatar.id` from GET /v1/personas/{id}. The persona itself is not
+        # used for sessions: a `personaId` token runs the persona's own Anam
+        # LLM, and here Claude must be the only one answering (see
+        # anam_client.py).
+        avatar_id="acdefbc1-e346-45d6-b846-0c33e6a320d1",
+        voice_id="145c6f3c-399a-4989-9761-8ba52cde0363",
+        avatar_model="cara-4",
         industry="roofing",
         difficulty="Easy",
         trait_tags=[
