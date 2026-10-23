@@ -150,6 +150,14 @@ class EndSessionResponse(BaseModel):
     duration_sec: int
     trial: dict | None = None  # updated trial status after this session's time was charged
     paid_minutes: dict | None = None  # the same for a paid account
+    # What the browser writes into the client file (the suite's unified
+    # client file, ccai.sessions): the final scores and what was practised.
+    pressure: int | None = None
+    trust: int | None = None
+    specificity: int | None = None
+    persona_name: str | None = None
+    scenario_title: str | None = None
+    created_at: str | None = None
 
 
 class AvatarTokenRequest(BaseModel):

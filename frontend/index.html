@@ -223,6 +223,15 @@
     box-shadow:0 0 26px rgba(120,110,255,0.35);
   }
   .btn:disabled{opacity:0.35; cursor:not-allowed; box-shadow:none;}
+  /* The client a session is for (client_practice.js): its debrief and scores
+     go into that client's file in the clients folder. */
+  .btn.small{padding:9px 14px; font-size:12.5px; border-radius:9px;}
+  .ccai-client-row{display:flex; flex-direction:column; gap:8px; align-items:stretch;}
+  .ccai-client-row .btn{align-self:flex-start;}
+  .ccai-client-note{margin-top:6px; font-size:12px; line-height:1.5; color:var(--text-dim);}
+  .ccai-file-note{display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; margin:14px 0 0; padding:10px 14px;
+    border:1px solid var(--border-bright); border-radius:10px; background:var(--bg-raised); font-size:13px; color:var(--text);}
+  .ccai-file-note[hidden]{display:none;}
   .btn.ghost{background:transparent; border:1px solid var(--border); color:var(--text); box-shadow:none;}
   .btn.ghost:hover{border-color:var(--border-bright);}
   .btn.block{width:100%;}
@@ -1252,6 +1261,12 @@
      two apps, one click away. The same script in all three apps. -->
 <script src="suite_switcher.js?v=4" data-app="consultcastai" data-before="#profileWrap"
         data-icon="assets/aicurator-spark.png"></script>
+<!-- The unified client file (the suite's docs/CLIENT_FILE.md): clientfile.js is
+     the suite's shared module, copied unchanged (tests/test_client_file.py
+     checks it); client_practice.js adds the Client picker and writes each
+     debrief and its scores into the client's file. -->
+<script src="clientfile.js?v=1"></script>
+<script src="client_practice.js?v=1"></script>
 <script type="module">
 import { createClient, AnamEvent } from "https://cdn.jsdelivr.net/npm/@anam-ai/js-sdk@4/+esm";
 
@@ -4206,6 +4221,8 @@ window.endSession = async function(){
     recap.innerHTML = goalRecapHtml();
     recap.classList.remove('hidden');
     setGoals(false, false); // frozen so the recap and the panel agree
+    // the debrief and final scores into the client's file (client_practice.js)
+    if(window.CcaiClientFile) window.CcaiClientFile.record(res, { persona: currentPersona && currentPersona.name, scenario: currentScenario && currentScenario.title });
     document.getElementById('debriefScreen').scrollIntoView({ behavior: 'smooth' });
     setComposerEnabled(false); // session is over, nothing left to send to
   }catch(e){

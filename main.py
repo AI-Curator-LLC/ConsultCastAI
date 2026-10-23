@@ -1480,6 +1480,7 @@ def end_session(session_id: str, user: auth.AuthUser = Depends(auth.require_appr
         return EndSessionResponse(
             session_id=session.id, debrief=session.debrief, duration_sec=session.duration_sec,
             trial=minutes.trial_status(done_for), paid_minutes=minutes.paid_status(done_for),
+            **_session_summary(session),
         )
 
     # The server's own clock (see minutes.py), not an in-memory start time
@@ -1516,7 +1517,18 @@ def end_session(session_id: str, user: auth.AuthUser = Depends(auth.require_appr
     return EndSessionResponse(
         session_id=session.id, debrief=debrief, duration_sec=duration_sec,
         trial=minutes.trial_status(account), paid_minutes=minutes.paid_status(account),
+        **_session_summary(session),
     )
+
+
+def _session_summary(session) -> dict:
+    """The scores and what was practised, for the client file the browser
+    keeps (ccai.sessions). No transcript: that stays here."""
+    return {
+        "pressure": session.pressure, "trust": session.trust, "specificity": session.specificity,
+        "persona_name": session.persona_name, "scenario_title": session.scenario_title,
+        "created_at": getattr(session, "created_at", None),
+    }
 
 
 @app.post("/sessions/{session_id}/pause")
