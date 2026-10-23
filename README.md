@@ -308,6 +308,31 @@ beyond 5, transferring team ownership, proration on plan changes (the
 Customer Portal handles the basic case), custom dunning logic beyond
 Stripe's built-in retries — all deliberately deferred, not oversights.
 
+## The client file (2026-10-23)
+
+The AI Curator Consulting Suite keeps one file per client in a folder the
+consultant chooses (the suite repo's `docs/CLIENT_FILE.md`). ConsultCastAI
+adds to it from the browser only:
+
+- `frontend/clientfile.js` is the suite's shared module, copied unchanged;
+  `tests/test_client_file.py` fails if it drifts from the suite's copy
+  (when the aicsuite repo sits beside this one, or `AICSUITE_DIR` points at
+  it). Change it in the suite first.
+- `frontend/client_practice.js` puts a **Client** picker first on the setup
+  panel (the folder's clients, or no client). When a session ends, its
+  debrief and final scores go into that client's file as `ccai.sessions`
+  (`id, persona, scenario, createdAt, durationSec, scores {pressure, trust,
+  specificity}, debrief`) with `lifecycle.lastPracticeSession`; with no
+  client, into `_practice.client.json`. Transcripts stay here, under the
+  retention rules below.
+- `POST /sessions/{id}/end` also returns `pressure`, `trust`,
+  `specificity`, `persona_name`, `scenario_title` and `created_at` for
+  that, and nothing more.
+- The suite opens this app for a client with `?client=<id>`; the client is
+  preselected for the browser tab, so it survives signing in.
+- The folder is read and written in the browser (File System Access API,
+  Chrome and Edge). Elsewhere the debrief stays in Debrief History only.
+
 ## Data retention, deletion, and export
 
 Gives users control over their data and puts a real, enforced expiry on
@@ -322,6 +347,7 @@ stored sessions.
 | User deletes a session, or all sessions | Deleted immediately |
 | User deletes their account | Account, sessions, and usage records deleted immediately. One thing is kept: if the account used any trial time, a keyed hash of its email, so the same address can't get a second trial (see "Trial and minutes tracking") |
 | Billing records | Stripe holds them — we keep only customer id, status, and dates |
+| A copy in the consultant's client file (2026-10-23) | When the consultant uses a clients folder, each finished session's debrief, final scores, persona, scenario, date and length are also written by the browser into that client's file on the consultant's own device (or `_practice.client.json`). Never the transcript. That copy is the consultant's file: the retention rules above do not reach it, and deleting a session here does not delete it |
 
 All three periods are env vars (`retention.py`), defaulted to the values
 above and declared in `render.yaml` so they're one edit away, no code
