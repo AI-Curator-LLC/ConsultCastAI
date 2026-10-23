@@ -296,22 +296,51 @@ const ClientFile = (function () {
     await w.close();
   }
 
-  // Every client file in the folder (not the archive), newest first, with
-  // the files that could not be read listed apart so nothing is hidden.
-  // ConsultCastAI's practice file (sessions with no client) is not a client:
-  // it comes back on its own as `practice` (or null).
+  // ---- the folder's layout -------------------------------------------------
+  // A client file sits directly in the clients folder or in a subfolder up to
+  // MAX_DEPTH levels down: one folder per client, with that client's file and
+  // its exported reports. Hidden folders, the archive and tool folders are
+  // not entered, and only the files asked for are ever read.
+  const MAX_DEPTH = 3;
+  const SKIP_DIRS = [ARCHIVE_DIR, 'node_modules', '__pycache__'];
+  function skipDir(name) { return name.startsWith('.') || SKIP_DIRS.includes(name.toLowerCase()); }
+
+  // Every file under the clients folder (or `root`) whose name passes `want`:
+  // [{ name, path, handle, dir, folder }]. `path` is relative to the clients
+  // folder ("Acme/acme.client.json"), `folder` is its folder's path ("" at
+  // the top), `dir` that folder's handle.
+  async function walk(want, root) {
+    const out = [];
+    async function visit(dir, folder, depth) {
+      for await (const entry of dir.values()) {
+        if (entry.kind === 'directory') {
+          if (depth < MAX_DEPTH && !skipDir(entry.name)) await visit(entry, folder ? folder + '/' + entry.name : entry.name, depth + 1);
+        } else if (want(entry.name)) {
+          out.push({ name: entry.name, path: folder ? folder + '/' + entry.name : entry.name, handle: entry, dir, folder });
+        }
+      }
+    }
+    await visit(root || requireDir(), '', 0);
+    return out;
+  }
+
+  // Every client file in the folder and its subfolders (not the archive),
+  // newest first, with the files that could not be read listed apart so
+  // nothing is hidden. Each entry: { fileName (its path), handle, doc, dir,
+  // folder }. ConsultCastAI's practice file (sessions with no client), at the
+  // top of the folder, is not a client: it comes back on its own as
+  // `practice` (or null).
   async function list() {
-    const dir = requireDir();
     const clients = [], unreadable = [];
     let practice = null;
-    for await (const entry of dir.values()) {
-      if (entry.kind !== 'file' || !entry.name.toLowerCase().endsWith(EXT)) continue;
+    for (const f of await walk(n => n.toLowerCase().endsWith(EXT))) {
       try {
-        const doc = await readHandle(entry);
-        if (entry.name.toLowerCase() === PRACTICE_FILE) { practice = { fileName: entry.name, handle: entry, doc }; continue; }
-        clients.push({ fileName: entry.name, handle: entry, doc });
+        const doc = await readHandle(f.handle);
+        const entry = { fileName: f.path, handle: f.handle, doc, dir: f.dir, folder: f.folder };
+        if (!f.folder && f.name.toLowerCase() === PRACTICE_FILE) { practice = entry; continue; }
+        clients.push(entry);
       } catch (e) {
-        unreadable.push({ fileName: entry.name, reason: e.code || 'unreadable' });
+        unreadable.push({ fileName: f.path, reason: e.code || 'unreadable' });
       }
     }
     clients.sort((a, b) => String(b.doc.updatedAt || '').localeCompare(String(a.doc.updatedAt || '')));
@@ -330,7 +359,7 @@ const ClientFile = (function () {
       await writeHandle(handle, blank({ name: 'Practice sessions' }, app || 'ccai'));
     }
     const doc = await readHandle(handle);
-    return { fileName: PRACTICE_FILE, handle, doc, base: clone(doc) };
+    return { fileName: PRACTICE_FILE, handle, doc, base: clone(doc), dir, folder: '' };
   }
 
   // One client, by id (the `?client=<id>` the suite opens an app with). The
@@ -339,18 +368,34 @@ const ClientFile = (function () {
     const { clients } = await list();
     const hit = clients.find(c => c.doc.id === id);
     if (!hit) throw new ClientFileError('not_found', 'That client is not in your clients folder.');
-    return { fileName: hit.fileName, handle: hit.handle, doc: hit.doc, base: clone(hit.doc) };
+    return { fileName: hit.fileName, handle: hit.handle, doc: hit.doc, base: clone(hit.doc), dir: hit.dir, folder: hit.folder };
+  }
+
+  // The folder a new client gets: its name as typed, minus what a folder
+  // name cannot hold.
+  function folderNameFor(name) {
+    const s = String(name || '').replace(/[<>:"/\\|?*\u0000-\u001f]/g, ' ').replace(/\s+/g, ' ').trim()
+      .replace(/^\.+/, '').slice(0, 80).replace(/[. ]+$/, '');
+    return s || 'Client';
   }
 
   // A new client file holding the shared blocks only. `client` is the
-  // client block's fields (at least the name).
-  async function create(client, app) {
-    const dir = requireDir();
+  // client block's fields (at least the name). It goes into a folder named
+  // after the client (made, or the one already there), or into `opts.dir`
+  // (with `opts.folder`, its path) when given: the migration writes next to
+  // the old files.
+  async function create(client, app, opts) {
+    const root = requireDir();
     const doc = blank(client, app);
+    let dir = opts && opts.dir, folder = opts && opts.dir ? String(opts.folder || '') : '';
+    if (!dir) {
+      folder = folderNameFor(doc.client.name);
+      dir = await root.getDirectoryHandle(folder, { create: true });
+    }
     const fileName = await freeName(dir, slugify(doc.client.name));
     const handle = await dir.getFileHandle(fileName, { create: true });
     await writeHandle(handle, doc);
-    return { fileName, handle, doc, base: clone(doc) };
+    return { fileName: folder ? folder + '/' + fileName : fileName, handle, doc, base: clone(doc), dir, folder };
   }
 
   // A silent save from `app`: re-read the file, merge this app's changes into
@@ -371,21 +416,60 @@ const ClientFile = (function () {
     return doc;
   }
 
-  // Archive: move the file into `archive/`. There is no delete; restoring is
-  // moving it back by hand.
-  async function archive(fileName) {
-    const dir = requireDir();
-    const src = await dir.getFileHandle(fileName);
-    const text = await (await src.getFile()).text();
-    const arch = await dir.getDirectoryHandle(ARCHIVE_DIR, { create: true });
-    const stem = fileName.slice(0, -EXT.length);
-    const target = await freeName(arch, stem);
-    const dst = await arch.getFileHandle(target, { create: true });
+  // Archive: into `archive/` at the top of the clients folder. A client
+  // with a folder of its own (no other client file in it or under it) moves
+  // with the whole folder, its exported reports included, keeping its path
+  // under archive/; a client file on its own moves alone. There is no
+  // delete; restoring is moving it back by hand. `target` is an entry from
+  // list() or its fileName (path). Returns where it went.
+  async function archive(target) {
+    const root = requireDir();
+    const path = typeof target === 'string' ? target : target.fileName;
+    const all = await walk(n => n.toLowerCase().endsWith(EXT));
+    const me = all.find(f => f.path === path);
+    if (!me) throw new ClientFileError('not_found', 'That client is not in your clients folder.');
+    const arch = await root.getDirectoryHandle(ARCHIVE_DIR, { create: true });
+    const own = me.folder && !all.some(f => f !== me && (f.folder === me.folder || f.folder.startsWith(me.folder + '/')));
+    if (own) {
+      const parts = me.folder.split('/');
+      const leaf = parts.pop();
+      let into = arch, parent = root;
+      for (const p of parts) {
+        into = await into.getDirectoryHandle(p, { create: true });
+        parent = await parent.getDirectoryHandle(p);
+      }
+      let name = leaf, n = 2;
+      while (await dirExists(into, name)) name = `${leaf}-${n++}`;
+      await copyDir(me.dir, await into.getDirectoryHandle(name, { create: true }));
+      await parent.removeEntry(leaf, { recursive: true });
+      return [ARCHIVE_DIR, ...parts, name].join('/');
+    }
+    const text = await (await me.handle.getFile()).text();
+    const stem = me.name.slice(0, -EXT.length);
+    const fileName = await freeName(arch, stem);
+    const dst = await arch.getFileHandle(fileName, { create: true });
     const w = await dst.createWritable();
     await w.write(text);
     await w.close();
-    await dir.removeEntry(fileName);
-    return ARCHIVE_DIR + '/' + target;
+    await me.dir.removeEntry(me.name);
+    return ARCHIVE_DIR + '/' + fileName;
+  }
+  async function dirExists(dir, name) {
+    try { await dir.getDirectoryHandle(name); return true; } catch (e) { return false; }
+  }
+  // Every file and folder of `src` into `dst`, byte for byte.
+  async function copyDir(src, dst) {
+    for await (const entry of src.values()) {
+      if (entry.kind === 'directory') {
+        await copyDir(entry, await dst.getDirectoryHandle(entry.name, { create: true }));
+      } else {
+        const f = await entry.getFile();
+        const data = typeof f.arrayBuffer === 'function' ? await f.arrayBuffer() : await f.text();
+        const w = await (await dst.getFileHandle(entry.name, { create: true })).createWritable();
+        await w.write(data);
+        await w.close();
+      }
+    }
   }
 
   // ---- one-file mode (no folder access) ----------------------------------
@@ -423,7 +507,7 @@ const ClientFile = (function () {
   return {
     FORMAT, VERSION, EXT, ARCHIVE_DIR, PRACTICE_FILE, APPS, SECTION_APPS, STAGES, LIFECYCLE_FLAGS, LIFECYCLE_DATES,
     ClientFileError, newId, slugify, nameKey, blank, normalize, parse, serialize, merge, mergeFields, mergeSection,
-    hasFolderAccess, restore, reconnect, pick, useFolder, folderName, list, open, openPractice, create, save, archive,
+    hasFolderAccess, restore, reconnect, pick, useFolder, folderName, walk, folderNameFor, list, open, openPractice, create, save, archive,
     openOneFile, downloadOneFile,
   };
 })();

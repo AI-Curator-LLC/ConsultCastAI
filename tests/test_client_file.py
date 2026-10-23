@@ -42,7 +42,7 @@ def check(label, cond, extra=""):
 
 print("=== 0. clientfile.js matches the suite's ===")
 mine = (ROOT / "frontend" / "clientfile.js").read_bytes()
-cands = [os.environ.get("AICSUITE_DIR", ""), str(ROOT.parent / "aicsuite-ucf"), str(ROOT.parent / "aicsuite")]
+cands = [os.environ.get("AICSUITE_DIR", ""), str(ROOT.parent / "aicsuite"), str(ROOT.parent / "aicsuite-ucf")]
 suite = next((pathlib.Path(c, "web", "js", "clientfile.js") for c in cands if c and pathlib.Path(c, "web", "js", "clientfile.js").exists()), None)
 if suite is None:
     print("[SKIP] the aicsuite repo is not beside this one; set AICSUITE_DIR to compare")
