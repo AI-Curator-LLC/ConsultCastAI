@@ -11,3 +11,4 @@ slowapi>=0.1.9
 # psycopg2-binary>=2.9
 # Only needed if you switch store.py off local-file mode:
 # google-cloud-firestore>=2.16
+certifi>=2026.10.19
