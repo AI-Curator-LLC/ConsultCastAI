@@ -227,6 +227,14 @@ class SsoBackchannelRequest(BaseModel):
     sids: list[str] = Field(max_length=50)
 
 
+@app.get("/health")
+def health():
+    """Liveness probe for Render's health check (healthCheckPath in
+    render.yaml). Unauthenticated, not rate limited, and touches nothing (no
+    disk, no Claude): it answers whether the process is up."""
+    return {"status": "ok"}
+
+
 @app.get("/sso/status")
 def sso_status():
     """Public: should the login screen hand over to the suite. `suite` is

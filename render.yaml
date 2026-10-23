@@ -20,6 +20,7 @@ services:
     plan: 0.5c-512mb  # "Starter" in the Render dashboard; the plan field wants this raw compute-spec id, not the display name
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health  # Render waits for this before sending traffic to a new deploy, and restarts the service if it stops answering
     disk:
       name: consultcastai-data
       mountPath: /data
