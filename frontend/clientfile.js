@@ -251,6 +251,9 @@ const ClientFile = (function () {
     if (!same(base && base.stage, mine.stage) && STAGES.includes(mine.stage)) out.stage = mine.stage;
     if (isObj(mine.calendar)) out.calendar = mergeCalendar(disk.calendar, base && base.calendar, mine.calendar);
     if (Array.isArray(mine.meetings)) out.meetings = mergeMeetings(disk.meetings, base && base.meetings, mine.meetings);
+    // the saved summary of recent email with the client's contacts (docs/SPEC_Meetings_Calendar.md
+    // section 7): whole, from the writer that changed it
+    if (isObj(mine.correspondence) && !same(base && base.correspondence, mine.correspondence)) out.correspondence = clone(mine.correspondence);
     out.updatedAt = new Date().toISOString();
     out.updatedBy = app;
     return out;
