@@ -188,6 +188,47 @@ const ClientFile = (function () {
     return out;
   }
 
+  // The meetings list (docs/SPEC_Meetings_Calendar.md section 5.3): written
+  // by the suite (a meeting and its transcript, summary and follow-ups) and
+  // by the apps (the suggestions BriefPilot and AdoptPilot make from it, and
+  // what the consultant decides). Merged by meeting id, then each follow-up
+  // and suggestion by its id: what this writer changed since it opened the
+  // file is taken, anything else stays as on disk, and a decision on disk
+  // (accepted, dismissed) is never undone by a writer still showing it
+  // pending. A meeting or an item this writer removed is removed.
+  const DECIDED = ['accepted', 'dismissed'];
+  const byId = list => new Map((Array.isArray(list) ? list : []).filter(x => isObj(x) && x.id).map(x => [String(x.id), x]));
+  function mergeById(disk, base, mine, mergeOne) {
+    const d = byId(disk), b = byId(base), m = byId(mine);
+    const out = new Map(Array.from(d, ([k, v]) => [k, clone(v)]));
+    for (const id of new Set([...b.keys(), ...m.keys()])) {
+      const bi = b.get(id), mi = m.get(id), di = out.get(id);
+      if (same(bi, mi)) continue;
+      if (mi === undefined) { out.delete(id); continue; }
+      out.set(id, di === undefined ? clone(mi) : mergeOne(di, bi, mi));
+    }
+    return Array.from(out.values());
+  }
+  function mergeItem(di, bi, mi) {
+    if (DECIDED.includes(di.status) && !DECIDED.includes(mi.status)) return di;
+    const out = clone(di);
+    for (const k of Object.keys(mi)) if (!same(bi && bi[k], mi[k])) out[k] = clone(mi[k]);
+    return out;
+  }
+  function mergeMeeting(dm, bm, mm) {
+    const out = clone(dm);
+    for (const k of Object.keys(mm)) {
+      if (k === 'followUps' || k === 'suggestions') out[k] = mergeById(dm[k], bm && bm[k], mm[k], mergeItem);
+      else if (k === 'analyzed') out[k] = Object.assign({}, isObj(dm[k]) ? dm[k] : {}, isObj(mm[k]) ? mm[k] : {});
+      else if (!same(bm && bm[k], mm[k])) out[k] = clone(mm[k]);
+    }
+    return out;
+  }
+  function mergeMeetings(disk, base, mine) {
+    return mergeById(disk, base, mine, mergeMeeting)
+      .sort((x, y) => String(y.start || '').localeCompare(String(x.start || '')));
+  }
+
   // What one app's save does to the file on disk. `base` is the file as this
   // app opened it (or last saved it); `mine` is the app's current copy;
   // `opts.keys` lists the keys the app manages in its own section. The shared
@@ -209,6 +250,7 @@ const ClientFile = (function () {
     }
     if (!same(base && base.stage, mine.stage) && STAGES.includes(mine.stage)) out.stage = mine.stage;
     if (isObj(mine.calendar)) out.calendar = mergeCalendar(disk.calendar, base && base.calendar, mine.calendar);
+    if (Array.isArray(mine.meetings)) out.meetings = mergeMeetings(disk.meetings, base && base.meetings, mine.meetings);
     out.updatedAt = new Date().toISOString();
     out.updatedBy = app;
     return out;
@@ -528,7 +570,7 @@ const ClientFile = (function () {
 
   return {
     FORMAT, VERSION, EXT, ARCHIVE_DIR, PRACTICE_FILE, APPS, SECTION_APPS, STAGES, LIFECYCLE_FLAGS, LIFECYCLE_DATES,
-    ClientFileError, newId, slugify, nameKey, blank, normalize, parse, serialize, merge, mergeFields, mergeSection, mergeCalendar,
+    ClientFileError, newId, slugify, nameKey, blank, normalize, parse, serialize, merge, mergeFields, mergeSection, mergeCalendar, mergeMeetings,
     hasFolderAccess, restore, reconnect, pick, useFolder, folderName, walk, folderNameFor, list, open, openPractice, create, save, archive,
     openOneFile, downloadOneFile,
   };
