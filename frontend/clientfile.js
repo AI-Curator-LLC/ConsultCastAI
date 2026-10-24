@@ -167,6 +167,27 @@ const ClientFile = (function () {
     return out;
   }
 
+  // The calendar block (docs/SPEC_Meetings_Calendar.md section 6): the
+  // per-client switch and, per dated item, the id of the event put on the
+  // consultant's calendar for it (js/calendar.js). Every writer may change
+  // it, so it merges three ways: `enabled` and each event entry are taken
+  // from this writer's copy only where it changed them since it opened the
+  // file (an entry it removed is removed), else kept from disk. Another
+  // writer's new event ids are never lost.
+  function mergeCalendar(disk, base, mine) {
+    const d = isObj(disk) ? disk : {}, b = isObj(base) ? base : {}, m = isObj(mine) ? mine : {};
+    const out = clone(d);
+    if ('enabled' in m && !same(b.enabled, m.enabled)) out.enabled = m.enabled;
+    const de = isObj(d.events) ? d.events : {}, be = isObj(b.events) ? b.events : {}, me = isObj(m.events) ? m.events : {};
+    const events = clone(de);
+    for (const k of new Set([...Object.keys(be), ...Object.keys(me)])) {
+      if (same(be[k], me[k])) continue;
+      if (me[k] === undefined) delete events[k]; else events[k] = clone(me[k]);
+    }
+    out.events = events;
+    return out;
+  }
+
   // What one app's save does to the file on disk. `base` is the file as this
   // app opened it (or last saved it); `mine` is the app's current copy;
   // `opts.keys` lists the keys the app manages in its own section. The shared
@@ -187,6 +208,7 @@ const ClientFile = (function () {
       out[app] = mergeSection(disk[app], mine[app], opts && opts.keys);
     }
     if (!same(base && base.stage, mine.stage) && STAGES.includes(mine.stage)) out.stage = mine.stage;
+    if (isObj(mine.calendar)) out.calendar = mergeCalendar(disk.calendar, base && base.calendar, mine.calendar);
     out.updatedAt = new Date().toISOString();
     out.updatedBy = app;
     return out;
@@ -506,7 +528,7 @@ const ClientFile = (function () {
 
   return {
     FORMAT, VERSION, EXT, ARCHIVE_DIR, PRACTICE_FILE, APPS, SECTION_APPS, STAGES, LIFECYCLE_FLAGS, LIFECYCLE_DATES,
-    ClientFileError, newId, slugify, nameKey, blank, normalize, parse, serialize, merge, mergeFields, mergeSection,
+    ClientFileError, newId, slugify, nameKey, blank, normalize, parse, serialize, merge, mergeFields, mergeSection, mergeCalendar,
     hasFolderAccess, restore, reconnect, pick, useFolder, folderName, walk, folderNameFor, list, open, openPractice, create, save, archive,
     openOneFile, downloadOneFile,
   };
