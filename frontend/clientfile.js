@@ -254,6 +254,9 @@ const ClientFile = (function () {
     // the saved summary of recent email with the client's contacts (docs/SPEC_Meetings_Calendar.md
     // section 7): whole, from the writer that changed it
     if (isObj(mine.correspondence) && !same(base && base.correspondence, mine.correspondence)) out.correspondence = clone(mine.correspondence);
+    // Income by Client (docs/SPEC_Income_by_Client.md section 6): the figures read from the
+    // consultant's books and their "This is [client]" links, written by the suite only: whole
+    if (isObj(mine.income) && !same(base && base.income, mine.income)) out.income = clone(mine.income);
     out.updatedAt = new Date().toISOString();
     out.updatedBy = app;
     return out;
