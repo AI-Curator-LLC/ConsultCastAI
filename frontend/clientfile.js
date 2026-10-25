@@ -167,24 +167,30 @@ const ClientFile = (function () {
     return out;
   }
 
-  // The calendar block (docs/SPEC_Meetings_Calendar.md section 6): the
-  // per-client switch and, per dated item, the id of the event put on the
-  // consultant's calendar for it (js/calendar.js). Every writer may change
-  // it, so it merges three ways: `enabled` and each event entry are taken
-  // from this writer's copy only where it changed them since it opened the
-  // file (an entry it removed is removed), else kept from disk. Another
-  // writer's new event ids are never lost.
+  // The calendar block (docs/SPEC_Meetings_Calendar.md section 6,
+  // docs/SPEC_Google_Workspace.md section 4): the per-client switch and, per
+  // dated item, the id of the event put on each of the consultant's
+  // calendars for it (js/calendar.js): Outlook's under `events`, Google's
+  // under `google`. Every writer may change it, so it merges three ways:
+  // `enabled` and each event entry are taken from this writer's copy only
+  // where it changed them since it opened the file (an entry it removed is
+  // removed), else kept from disk. Another writer's new event ids are never
+  // lost, and a writer that knows nothing of Google leaves `google` as it is.
   function mergeCalendar(disk, base, mine) {
     const d = isObj(disk) ? disk : {}, b = isObj(base) ? base : {}, m = isObj(mine) ? mine : {};
     const out = clone(d);
     if ('enabled' in m && !same(b.enabled, m.enabled)) out.enabled = m.enabled;
-    const de = isObj(d.events) ? d.events : {}, be = isObj(b.events) ? b.events : {}, me = isObj(m.events) ? m.events : {};
-    const events = clone(de);
-    for (const k of new Set([...Object.keys(be), ...Object.keys(me)])) {
-      if (same(be[k], me[k])) continue;
-      if (me[k] === undefined) delete events[k]; else events[k] = clone(me[k]);
-    }
-    out.events = events;
+    const mergeMap = name => {
+      const dm = isObj(d[name]) ? d[name] : {}, bm = isObj(b[name]) ? b[name] : {}, mm = isObj(m[name]) ? m[name] : {};
+      const map = clone(dm);
+      for (const k of new Set([...Object.keys(bm), ...Object.keys(mm)])) {
+        if (same(bm[k], mm[k])) continue;
+        if (mm[k] === undefined) delete map[k]; else map[k] = clone(mm[k]);
+      }
+      return map;
+    };
+    out.events = mergeMap('events');
+    if ('google' in m) out.google = mergeMap('google');
     return out;
   }
 
