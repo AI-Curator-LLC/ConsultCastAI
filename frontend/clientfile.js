@@ -582,8 +582,8 @@ const ClientFile = (function () {
   // The branding a report for this client carries (the suite's Account page,
   // docs/SPEC_Branding.md): the client's own when that client was set to use
   // a different logo (`consultant.branding.own`), else the consultant's suite
-  // branding in _me.json, else what an app saved in the client file before
-  // there was suite branding. `me` and `doc` may be missing.
+  // branding in _me.json, the single source. What an app copied into a
+  // client file without `own` is not used. `me` and `doc` may be missing.
   // { logoRef, name, contactLine, accent, source: 'client' | 'suite' | 'none' }.
   const LOGO = /^data:image\/(png|jpe?g|gif|webp|svg\+xml);base64,/;
   function branding(me, doc) {
@@ -594,7 +594,6 @@ const ClientFile = (function () {
     const suite = isObj(me) && isObj(me.consultant) && isObj(me.consultant.branding) ? me.consultant.branding : {};
     if (own.own === true && has(own)) return pick(own, 'client');
     if (has(suite)) return pick(suite, 'suite');
-    if (has(own)) return pick(own, 'client');
     return pick({}, 'none');
   }
 
