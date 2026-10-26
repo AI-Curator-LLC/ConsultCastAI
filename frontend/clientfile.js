@@ -551,8 +551,10 @@ const ClientFile = (function () {
   }
 
   // ---- the consultant's own file (_me.json) ------------------------------------
+  const blankBranding = () => ({ logoRef: '', name: '', contactLine: '', email: '', phone: '', website: '', accent: '' });
   function blankMe() {
-    return { format: ME_FORMAT, version: VERSION, id: 'me', updatedAt: new Date().toISOString(), tasks: [], focus: {}, notes: {}, calendar: {} };
+    return { format: ME_FORMAT, version: VERSION, id: 'me', updatedAt: new Date().toISOString(), tasks: [], focus: {}, notes: {}, calendar: {},
+             consultant: { branding: blankBranding() } };
   }
   function normalizeMe(doc) {
     if (!isObj(doc) || doc.format !== ME_FORMAT) throw new ClientFileError('not_me_file', 'This is not the planner file.');
@@ -562,6 +564,8 @@ const ClientFile = (function () {
     const out = clone(doc);
     if (!Array.isArray(out.tasks)) out.tasks = [];
     ['focus', 'notes', 'calendar'].forEach(k => { if (!isObj(out[k])) out[k] = {}; });
+    const c = isObj(out.consultant) ? out.consultant : {};
+    out.consultant = Object.assign({}, c, { branding: Object.assign(blankBranding(), isObj(c.branding) ? c.branding : {}) });
     return out;
   }
   // The file as an entry like open()'s; a blank one (not yet written) when
@@ -595,12 +599,33 @@ const ClientFile = (function () {
     out.focus = mergeByKey(from.focus, base.focus, mine.focus);
     out.notes = mergeByKey(from.notes, base.notes, mine.notes);
     if (isObj(mine.calendar)) out.calendar = mergeCalendar(from.calendar, base.calendar, mine.calendar);
+    // the consultant's branding (the suite's Account page), field by field
+    if (isObj(mine.consultant)) out.consultant = mergeFields(from.consultant, base.consultant, mine.consultant, ['branding']);
     out.updatedAt = new Date().toISOString();
     if (!entry.handle) entry.handle = await dir.getFileHandle(ME_FILE, { create: true });
     await writeHandle(entry.handle, out);
     entry.doc = out;
     entry.base = clone(out);
     return out;
+  }
+
+  // The branding a report for this client carries (the suite's Account page,
+  // docs/SPEC_Branding.md): the client's own when that client was set to use
+  // a different logo (`consultant.branding.own`), else the consultant's suite
+  // branding in _me.json, else what an app saved in the client file before
+  // there was suite branding. `me` and `doc` may be missing.
+  // { logoRef, name, contactLine, accent, source: 'client' | 'suite' | 'none' }.
+  const LOGO = /^data:image\/(png|jpe?g|gif|webp|svg\+xml);base64,/;
+  function branding(me, doc) {
+    const pick = (b, source) => ({ logoRef: typeof b.logoRef === 'string' && LOGO.test(b.logoRef) ? b.logoRef : '', name: String(b.name || ''),
+      contactLine: String(b.contactLine || ''), accent: /^#[0-9a-f]{6}$/i.test(String(b.accent || '')) ? String(b.accent) : '', source });
+    const has = b => !!(b.logoRef || b.name || b.contactLine);
+    const own = isObj(doc) && isObj(doc.consultant) && isObj(doc.consultant.branding) ? doc.consultant.branding : {};
+    const suite = isObj(me) && isObj(me.consultant) && isObj(me.consultant.branding) ? me.consultant.branding : {};
+    if (own.own === true && has(own)) return pick(own, 'client');
+    if (has(suite)) return pick(suite, 'suite');
+    if (has(own)) return pick(own, 'client');
+    return pick({}, 'none');
   }
 
   // Archive: into `archive/` at the top of the clients folder. A client
@@ -694,7 +719,7 @@ const ClientFile = (function () {
   return {
     FORMAT, VERSION, EXT, ARCHIVE_DIR, PRACTICE_FILE, ME_FILE, APPS, SECTION_APPS, STAGES, LIFECYCLE_FLAGS, LIFECYCLE_DATES,
     ClientFileError, newId, slugify, nameKey, blank, normalize, parse, serialize, merge, mergeFields, mergeSection, mergeCalendar, mergeMeetings, mergeTasks,
-    hasFolderAccess, restore, reconnect, pick, useFolder, folderName, walk, folderNameFor, list, open, openPractice, openMe, saveMe, create, createSample, removeSample, save, archive,
+    hasFolderAccess, restore, reconnect, pick, useFolder, folderName, walk, folderNameFor, list, open, openPractice, openMe, saveMe, branding, create, createSample, removeSample, save, archive,
     openOneFile, downloadOneFile,
   };
 })();
