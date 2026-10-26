@@ -32,6 +32,11 @@ const ClientFile = (function () {
   const EXT = '.client.json';
   const ARCHIVE_DIR = 'archive';
   const PRACTICE_FILE = '_practice' + EXT;
+  // the consultant's own file (the suite's Planner): personal tasks, the day's
+  // focus and notes. At the top of the clients folder, made on first use,
+  // never synced anywhere; not a client file, so no app lists it.
+  const ME_FILE = '_me.json';
+  const ME_FORMAT = 'aicsuite.me';
   const APPS = ['cbai', 'abai', 'ccai', 'suite'];
   const SECTION_APPS = ['cbai', 'abai', 'ccai'];
   const STAGES = ['diagnose', 'scope', 'deliver', 'adopt', 'measure', 'closed'];
@@ -235,6 +240,27 @@ const ClientFile = (function () {
       .sort((x, y) => String(y.start || '').localeCompare(String(x.start || '')));
   }
 
+  // The tasks the consultant adds in the suite's Planner (a suite-owned
+  // list, in a client file or in _me.json): merged by task id, each task
+  // field by field, so two tabs ticking different tasks both keep theirs.
+  function mergeTask(di, bi, mi) {
+    const out = clone(di);
+    for (const k of Object.keys(mi)) if (!same(bi && bi[k], mi[k])) out[k] = clone(mi[k]);
+    return out;
+  }
+  function mergeTasks(disk, base, mine) { return mergeById(disk, base, mine, mergeTask); }
+  // A map kept per key (the Planner's focus and notes, by date): each key this
+  // writer changed is taken (an emptied one removed), the rest kept from disk.
+  function mergeByKey(disk, base, mine) {
+    const out = isObj(disk) ? clone(disk) : {};
+    const b = isObj(base) ? base : {}, m = isObj(mine) ? mine : {};
+    for (const k of new Set([...Object.keys(b), ...Object.keys(m)])) {
+      if (same(b[k], m[k])) continue;
+      if (m[k] === undefined) delete out[k]; else out[k] = clone(m[k]);
+    }
+    return out;
+  }
+
   // What one app's save does to the file on disk. `base` is the file as this
   // app opened it (or last saved it); `mine` is the app's current copy;
   // `opts.keys` lists the keys the app manages in its own section. The shared
@@ -263,6 +289,8 @@ const ClientFile = (function () {
     // Income by Client (docs/SPEC_Income_by_Client.md section 6): the figures read from the
     // consultant's books and their "This is [client]" links, written by the suite only: whole
     if (isObj(mine.income) && !same(base && base.income, mine.income)) out.income = clone(mine.income);
+    // the consultant's own tasks for this client (the suite's Planner): by task id
+    if (Array.isArray(mine.tasks)) out.tasks = mergeTasks(disk.tasks, base && base.tasks, mine.tasks);
     out.updatedAt = new Date().toISOString();
     out.updatedBy = app;
     return out;
@@ -492,6 +520,59 @@ const ClientFile = (function () {
     return doc;
   }
 
+  // ---- the consultant's own file (_me.json) ------------------------------------
+  function blankMe() {
+    return { format: ME_FORMAT, version: VERSION, id: 'me', updatedAt: new Date().toISOString(), tasks: [], focus: {}, notes: {}, calendar: {} };
+  }
+  function normalizeMe(doc) {
+    if (!isObj(doc) || doc.format !== ME_FORMAT) throw new ClientFileError('not_me_file', 'This is not the planner file.');
+    if (typeof doc.version !== 'number' || doc.version > VERSION) {
+      throw new ClientFileError('newer_version', 'This file was saved by a newer version. Update the app to open it.');
+    }
+    const out = clone(doc);
+    if (!Array.isArray(out.tasks)) out.tasks = [];
+    ['focus', 'notes', 'calendar'].forEach(k => { if (!isObj(out[k])) out[k] = {}; });
+    return out;
+  }
+  // The file as an entry like open()'s; a blank one (not yet written) when
+  // it isn't there: it is made by the first save.
+  async function openMe() {
+    const dir = requireDir();
+    let handle = null;
+    try { handle = await dir.getFileHandle(ME_FILE); } catch (e) { handle = null; }
+    let doc = blankMe();
+    if (handle) {
+      const f = await handle.getFile();
+      if (f.size > MAX_FILE_BYTES) throw new ClientFileError('too_large', 'The planner file is too large to open.');
+      let raw;
+      try { raw = JSON.parse(await f.text()); } catch (e) { throw new ClientFileError('unreadable', 'The planner file could not be read as JSON.'); }
+      doc = normalizeMe(raw);
+    }
+    return { fileName: ME_FILE, handle, doc, base: clone(doc), dir, folder: '' };
+  }
+  // A silent save with the same rules as a client file: re-read, merge this
+  // writer's changes (tasks by id, focus and notes by date, the calendar
+  // block three ways), write back. Made the first time.
+  async function saveMe(entry, mine) {
+    const dir = requireDir();
+    let disk = null;
+    if (entry.handle) {
+      try { const f = await entry.handle.getFile(); disk = normalizeMe(JSON.parse(await f.text())); } catch (e) { disk = null; }
+    }
+    const from = disk || blankMe(), base = entry.base || blankMe();
+    const out = clone(from);
+    out.tasks = mergeTasks(from.tasks, base.tasks, mine.tasks);
+    out.focus = mergeByKey(from.focus, base.focus, mine.focus);
+    out.notes = mergeByKey(from.notes, base.notes, mine.notes);
+    if (isObj(mine.calendar)) out.calendar = mergeCalendar(from.calendar, base.calendar, mine.calendar);
+    out.updatedAt = new Date().toISOString();
+    if (!entry.handle) entry.handle = await dir.getFileHandle(ME_FILE, { create: true });
+    await writeHandle(entry.handle, out);
+    entry.doc = out;
+    entry.base = clone(out);
+    return out;
+  }
+
   // Archive: into `archive/` at the top of the clients folder. A client
   // with a folder of its own (no other client file in it or under it) moves
   // with the whole folder, its exported reports included, keeping its path
@@ -581,9 +662,9 @@ const ClientFile = (function () {
   }
 
   return {
-    FORMAT, VERSION, EXT, ARCHIVE_DIR, PRACTICE_FILE, APPS, SECTION_APPS, STAGES, LIFECYCLE_FLAGS, LIFECYCLE_DATES,
-    ClientFileError, newId, slugify, nameKey, blank, normalize, parse, serialize, merge, mergeFields, mergeSection, mergeCalendar, mergeMeetings,
-    hasFolderAccess, restore, reconnect, pick, useFolder, folderName, walk, folderNameFor, list, open, openPractice, create, save, archive,
+    FORMAT, VERSION, EXT, ARCHIVE_DIR, PRACTICE_FILE, ME_FILE, APPS, SECTION_APPS, STAGES, LIFECYCLE_FLAGS, LIFECYCLE_DATES,
+    ClientFileError, newId, slugify, nameKey, blank, normalize, parse, serialize, merge, mergeFields, mergeSection, mergeCalendar, mergeMeetings, mergeTasks,
+    hasFolderAccess, restore, reconnect, pick, useFolder, folderName, walk, folderNameFor, list, open, openPractice, openMe, saveMe, create, save, archive,
     openOneFile, downloadOneFile,
   };
 })();
