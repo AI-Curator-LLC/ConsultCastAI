@@ -451,36 +451,6 @@ const ClientFile = (function () {
     return { clients, unreadable, practice };
   }
 
-  // The sample client (Getting started, docs/SPEC_First_Run_Onboarding.md):
-  // written whole, in a folder of its own, and deleted the same way. Both
-  // refuse any file not marked `sample: true`, so neither can write over or
-  // remove a real client's file.
-  async function createSample(doc) {
-    const out = normalize(doc);
-    if (out.sample !== true) throw new ClientFileError('not_sample', 'This is not the sample client.');
-    const root = requireDir();
-    const folder = folderNameFor(out.client.name);
-    const dir = await root.getDirectoryHandle(folder, { create: true });
-    const fileName = await freeName(dir, slugify(out.client.name));
-    const handle = await dir.getFileHandle(fileName, { create: true });
-    await writeHandle(handle, out);
-    return { fileName: folder + '/' + fileName, handle, doc: out, base: clone(out), dir, folder };
-  }
-  async function removeSample(target) {
-    const root = requireDir();
-    const path = typeof target === 'string' ? target : target.fileName;
-    const me = (await walk(n => n.toLowerCase().endsWith(EXT))).find(f => f.path === path);
-    if (!me) throw new ClientFileError('not_found', 'That client is not in your clients folder.');
-    if ((await readHandle(me.handle)).sample !== true) throw new ClientFileError('not_sample', 'This is not the sample client.');
-    await me.dir.removeEntry(me.name);
-    // its own folder goes too, once nothing else is in it
-    if (me.folder && !me.folder.includes('/')) {
-      let empty = true;
-      for await (const entry of me.dir.values()) { if (entry) { empty = false; break; } }
-      if (empty) await root.removeEntry(me.folder);
-    }
-  }
-
   // The practice file, created the first time: where ConsultCastAI keeps the
   // sessions practised with no client. An entry like open()'s.
   async function openPractice(app) {
@@ -719,7 +689,7 @@ const ClientFile = (function () {
   return {
     FORMAT, VERSION, EXT, ARCHIVE_DIR, PRACTICE_FILE, ME_FILE, APPS, SECTION_APPS, STAGES, LIFECYCLE_FLAGS, LIFECYCLE_DATES,
     ClientFileError, newId, slugify, nameKey, blank, normalize, parse, serialize, merge, mergeFields, mergeSection, mergeCalendar, mergeMeetings, mergeTasks,
-    hasFolderAccess, restore, reconnect, pick, useFolder, folderName, walk, folderNameFor, list, open, openPractice, openMe, saveMe, branding, create, createSample, removeSample, save, archive,
+    hasFolderAccess, restore, reconnect, pick, useFolder, folderName, walk, folderNameFor, list, open, openPractice, openMe, saveMe, branding, create, save, archive,
     openOneFile, downloadOneFile,
   };
 })();

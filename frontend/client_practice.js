@@ -51,8 +51,7 @@
     sel.replaceChildren(el('option', null, 'No client: practice only'));
     sel.firstChild.value = '';
     S.clients.forEach(c => {
-      // the suite's sample client (sample: true in its file): marked in the list
-      const o = el('option', null, (c.doc.client.name || c.fileName) + (c.doc.sample === true ? ' (sample)' : ''));
+      const o = el('option', null, c.doc.client.name || c.fileName);
       o.value = c.doc.id;
       sel.append(o);
     });
@@ -64,9 +63,7 @@
     btn.hidden = S.folder === 'unsupported';
     btn.textContent = S.folder === 'ready' ? 'Change folder' : S.folder === 'reconnect' ? 'Reconnect folder' : 'Choose clients folder';
     note.textContent = S.folder === 'ready'
-      ? (sel.value ? (S.clients.some(c => c.doc.id === sel.value && c.doc.sample === true)
-          ? 'The suite’s sample client: not a real business. The debrief and scores go into its file.'
-          : 'The debrief and scores go into this client’s file.') : 'The debrief and scores go into your practice file.')
+      ? (sel.value ? 'The debrief and scores go into this client’s file.' : 'The debrief and scores go into your practice file.')
       : S.folder === 'reconnect' ? 'Reconnect your clients folder to keep debriefs in your client files.'
       : S.folder === 'unsupported' ? 'This browser cannot open your clients folder. Use Chrome or Edge to keep debriefs in your client files.'
       : 'Choose the folder where you keep your client files to keep each debrief with its client.';
