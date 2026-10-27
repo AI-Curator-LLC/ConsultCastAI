@@ -579,20 +579,18 @@ const ClientFile = (function () {
     return out;
   }
 
-  // The branding a report for this client carries (the suite's Account page,
-  // docs/SPEC_Branding.md): the client's own when that client was set to use
-  // a different logo (`consultant.branding.own`), else the consultant's suite
-  // branding in _me.json, the single source. What an app copied into a
-  // client file without `own` is not used. `me` and `doc` may be missing.
-  // { logoRef, name, contactLine, accent, source: 'client' | 'suite' | 'none' }.
+  // The branding a report for this client carries (the suite's Branding page,
+  // docs/SPEC_Branding.md): the consultant's own, from _me.json, the single
+  // source. A client never has a logo of its own; whatever a client file
+  // holds under consultant.branding is not used. `doc` is kept so callers
+  // need not change; `me` may be missing.
+  // { logoRef, name, contactLine, accent, source: 'suite' | 'none' }.
   const LOGO = /^data:image\/(png|jpe?g|gif|webp|svg\+xml);base64,/;
   function branding(me, doc) {
     const pick = (b, source) => ({ logoRef: typeof b.logoRef === 'string' && LOGO.test(b.logoRef) ? b.logoRef : '', name: String(b.name || ''),
       contactLine: String(b.contactLine || ''), accent: /^#[0-9a-f]{6}$/i.test(String(b.accent || '')) ? String(b.accent) : '', source });
     const has = b => !!(b.logoRef || b.name || b.contactLine);
-    const own = isObj(doc) && isObj(doc.consultant) && isObj(doc.consultant.branding) ? doc.consultant.branding : {};
     const suite = isObj(me) && isObj(me.consultant) && isObj(me.consultant.branding) ? me.consultant.branding : {};
-    if (own.own === true && has(own)) return pick(own, 'client');
     if (has(suite)) return pick(suite, 'suite');
     return pick({}, 'none');
   }
