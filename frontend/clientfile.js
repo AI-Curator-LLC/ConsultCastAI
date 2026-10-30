@@ -298,8 +298,14 @@ const ClientFile = (function () {
 
   // ---- the folder ----------------------------------------------------------
 
-  let DIR = null;               // the clients folder (FileSystemDirectoryHandle)
-  const hasFolderAccess = () => typeof window !== 'undefined' && typeof window.showDirectoryPicker === 'function';
+  let DIR = null;               // the clients folder (FileSystemDirectoryHandle, or js/cloudfolder.js's OneDrive / Drive folder)
+  const nativeFolders = () => typeof window !== 'undefined' && typeof window.showDirectoryPicker === 'function';
+  // OneDrive and Google Drive (js/cloudfolder.js), when the page loads it. A
+  // folder kept on the account opens in any browser (restore); choosing one
+  // here needs this browser's own folders too, for the "this computer" choice
+  // beside it (elsewhere it is chosen on the Account page).
+  const cloud = () => typeof CloudFolder !== 'undefined';
+  const hasFolderAccess = nativeFolders;
 
   function idb() {
     return new Promise((resolve, reject) => {
@@ -343,7 +349,12 @@ const ClientFile = (function () {
   // remembered) or 'unsupported' (one-file mode).
   async function restore() {
     if (DIR) return 'ready';
-    if (!hasFolderAccess()) return 'unsupported';
+    // the folder in OneDrive or Google Drive kept on the account comes first
+    if (cloud()) {
+      const h = await CloudFolder.restore().catch(() => null);
+      if (h) { DIR = h; return 'ready'; }
+    }
+    if (!nativeFolders()) return 'unsupported';
     const h = await idbGet();
     if (!h) return 'choose';
     const p = await permission(h, false);
@@ -352,6 +363,10 @@ const ClientFile = (function () {
   }
   // From a click: ask again for the remembered folder.
   async function reconnect() {
+    if (cloud()) {
+      const c = await CloudFolder.restore().catch(() => null);
+      if (c) { DIR = c; return 'ready'; }
+    }
     const h = await idbGet();
     if (!h) return 'choose';
     const p = await permission(h, true);
@@ -360,21 +375,43 @@ const ClientFile = (function () {
   }
   // From a click: "Choose clients folder". The same picker id in every app
   // starts the picker where the consultant chose last time.
+  // With js/cloudfolder.js on the page it asks first where the folder is:
+  // OneDrive, Google Drive, or "a folder on this computer" (this picker).
   async function pick() {
     if (!hasFolderAccess()) return 'unsupported';
+    if (cloud()) {
+      const h = await CloudFolder.choose(pickHere);
+      if (h) DIR = h;
+      return DIR ? 'ready' : 'choose';
+    }
+    const h = await pickHere();
+    if (h) DIR = h;
+    return DIR ? 'ready' : 'choose';
+  }
+  // "Use a folder on this computer" on its own (the Account page): the account
+  // then stops opening its OneDrive or Google Drive folder.
+  async function pickLocal() {
+    if (!nativeFolders()) return 'unsupported';
+    const h = await pickHere();
+    if (!h) return DIR ? 'ready' : 'choose';
+    DIR = h;
+    if (cloud()) await CloudFolder.forget();
+    return 'ready';
+  }
+  async function pickHere() {
     let h;
     try {
       h = await window.showDirectoryPicker({ id: 'aicsuite-clients', mode: 'readwrite' });
     } catch (e) {
-      if (e && e.name === 'AbortError') return DIR ? 'ready' : 'choose';
+      if (e && e.name === 'AbortError') return null;
       throw e;
     }
-    DIR = h;
     await idbPut(h);
-    return 'ready';
+    return h;
   }
   function useFolder(handle) { DIR = handle || null; }
-  function folderName() { return DIR ? DIR.name : ''; }
+  function folderName() { return DIR ? (DIR.label || DIR.name) : ''; }
+  const inCloud = () => !!(DIR && DIR.cloud);
   function requireDir() {
     if (!DIR) throw new ClientFileError('no_folder', 'Choose your clients folder again.');
     return DIR;
@@ -686,7 +723,7 @@ const ClientFile = (function () {
   return {
     FORMAT, VERSION, EXT, ARCHIVE_DIR, PRACTICE_FILE, ME_FILE, APPS, SECTION_APPS, STAGES, LIFECYCLE_FLAGS, LIFECYCLE_DATES,
     ClientFileError, newId, slugify, nameKey, blank, normalize, parse, serialize, merge, mergeFields, mergeSection, mergeCalendar, mergeMeetings, mergeTasks,
-    hasFolderAccess, restore, reconnect, pick, useFolder, folderName, walk, folderNameFor, list, open, openPractice, openMe, saveMe, branding, create, save, archive,
+    hasFolderAccess, restore, reconnect, pick, pickLocal, useFolder, folderName, inCloud, walk, folderNameFor, list, open, openPractice, openMe, saveMe, branding, create, save, archive,
     openOneFile, downloadOneFile,
   };
 })();
