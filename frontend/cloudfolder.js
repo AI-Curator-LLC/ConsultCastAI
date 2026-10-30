@@ -29,7 +29,9 @@ const CloudFolder = (() => {
   const FOLDER_MIME = 'application/vnd.google-apps.folder';
   const SIMPLE_MAX = 4 * 1024 * 1024;                        // Graph's one-request upload limit
   const NAMES = { onedrive: 'OneDrive', gdrive: 'Google Drive' };
-  const SOURCE = { onedrive: 'microsoft', gdrive: 'google' };
+  // where each token comes from: OneDrive with any Microsoft account
+  // (onedrive_files.py), Google Drive with the Google connection
+  const SOURCE = { onedrive: 'onedrive', gdrive: 'google' };
   const SCOPE = { onedrive: 'Files.ReadWrite', gdrive: 'https://www.googleapis.com/auth/drive' };
 
   // ES / FR / PT not yet reviewed by a native speaker (same caveat as the rest).
@@ -37,7 +39,7 @@ const CloudFolder = (() => {
     en: { where: 'Where is your clients folder?', whereP: 'Pick it once. The suite and all three apps then open it on their own when you sign in, in any browser.',
           od: 'Choose folder in OneDrive', gd: 'Choose folder in Google Drive', local: 'Use a folder on this computer',
           localP: 'Only this browser on this computer, and it may ask again after you close it.',
-          connect: 'Connect {name} first', allow: 'Allow {name} files first', odSub: 'With your Microsoft 365 connection', gdSub: 'With your Google connection',
+          connect: 'Connect {name} first', allow: 'Allow {name} files first', odSub: 'With your Microsoft account, personal or work', gdSub: 'With your Google connection',
           privacy: 'Your files go between {name} and this browser only. The suite keeps which folder you chose, never what is in it.',
           browseH: 'Choose your clients folder in {name}', top: 'My files', use: 'Use this folder', cancel: 'Cancel', back: 'Back',
           loading: 'Loading...', empty: 'No folders here.', files: '{n} files here', failed: 'Could not open this folder. Try again.',
@@ -45,7 +47,7 @@ const CloudFolder = (() => {
     es: { where: '¿Dónde está su carpeta de clientes?', whereP: 'Elíjala una vez. La suite y las tres aplicaciones la abrirán solas al iniciar sesión, en cualquier navegador.',
           od: 'Elegir carpeta en OneDrive', gd: 'Elegir carpeta en Google Drive', local: 'Usar una carpeta de este equipo',
           localP: 'Solo en este navegador de este equipo, y puede volver a pedirla al cerrarlo.',
-          connect: 'Conecte {name} primero', allow: 'Permita los archivos de {name} primero', odSub: 'Con su conexión de Microsoft 365', gdSub: 'Con su conexión de Google',
+          connect: 'Conecte {name} primero', allow: 'Permita los archivos de {name} primero', odSub: 'Con su cuenta Microsoft, personal o de trabajo', gdSub: 'Con su conexión de Google',
           privacy: 'Sus archivos van solo entre {name} y este navegador. La suite guarda qué carpeta eligió, nunca su contenido.',
           browseH: 'Elija su carpeta de clientes en {name}', top: 'Mis archivos', use: 'Usar esta carpeta', cancel: 'Cancelar', back: 'Atrás',
           loading: 'Cargando...', empty: 'No hay carpetas aquí.', files: '{n} archivos aquí', failed: 'No se pudo abrir esta carpeta. Inténtelo de nuevo.',
@@ -53,7 +55,7 @@ const CloudFolder = (() => {
     fr: { where: 'Où est votre dossier clients ?', whereP: 'Choisissez-le une fois. La suite et les trois applications l\'ouvriront seules à la connexion, dans n\'importe quel navigateur.',
           od: 'Choisir un dossier dans OneDrive', gd: 'Choisir un dossier dans Google Drive', local: 'Utiliser un dossier de cet ordinateur',
           localP: 'Seulement dans ce navigateur sur cet ordinateur, et il peut le redemander après la fermeture.',
-          connect: 'Connectez d\'abord {name}', allow: 'Autorisez d\'abord les fichiers {name}', odSub: 'Avec votre connexion Microsoft 365', gdSub: 'Avec votre connexion Google',
+          connect: 'Connectez d\'abord {name}', allow: 'Autorisez d\'abord les fichiers {name}', odSub: 'Avec votre compte Microsoft, personnel ou professionnel', gdSub: 'Avec votre connexion Google',
           privacy: 'Vos fichiers circulent uniquement entre {name} et ce navigateur. La suite garde le dossier choisi, jamais son contenu.',
           browseH: 'Choisissez votre dossier clients dans {name}', top: 'Mes fichiers', use: 'Utiliser ce dossier', cancel: 'Annuler', back: 'Retour',
           loading: 'Chargement...', empty: 'Aucun dossier ici.', files: '{n} fichiers ici', failed: 'Impossible d\'ouvrir ce dossier. Réessayez.',
@@ -61,7 +63,7 @@ const CloudFolder = (() => {
     pt: { where: 'Onde está sua pasta de clientes?', whereP: 'Escolha uma vez. A suíte e os três aplicativos a abrem sozinhos quando você entra, em qualquer navegador.',
           od: 'Escolher pasta no OneDrive', gd: 'Escolher pasta no Google Drive', local: 'Usar uma pasta deste computador',
           localP: 'Só neste navegador deste computador, e ele pode pedir de novo depois que você fechar.',
-          connect: 'Conecte o {name} primeiro', allow: 'Permita os arquivos do {name} primeiro', odSub: 'Com sua conexão Microsoft 365', gdSub: 'Com sua conexão Google',
+          connect: 'Conecte o {name} primeiro', allow: 'Permita os arquivos do {name} primeiro', odSub: 'Com sua conta Microsoft, pessoal ou de trabalho', gdSub: 'Com sua conexão Google',
           privacy: 'Seus arquivos vão apenas entre o {name} e este navegador. A suíte guarda qual pasta você escolheu, nunca o conteúdo.',
           browseH: 'Escolha sua pasta de clientes no {name}', top: 'Meus arquivos', use: 'Usar esta pasta', cancel: 'Cancelar', back: 'Voltar',
           loading: 'Carregando...', empty: 'Nenhuma pasta aqui.', files: '{n} arquivos aqui', failed: 'Não foi possível abrir esta pasta. Tente de novo.',
@@ -326,7 +328,7 @@ const CloudFolder = (() => {
     return d;
   }
   function connectUrl(provider) {
-    return SUITE + (provider === 'onedrive' ? '/api/integrations/microsoft/connect?folder=1' : '/api/integrations/google/connect?drive=1');
+    return SUITE + (provider === 'onedrive' ? '/api/integrations/onedrive/connect' : '/api/integrations/google/connect?drive=1');
   }
   // What each provider can do now: 'ready', 'no_files' or 'not_connected'
   // (the suite says, from the connections it holds; no token is asked for).
