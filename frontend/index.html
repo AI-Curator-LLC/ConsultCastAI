@@ -1325,7 +1325,9 @@ localStorage.removeItem('consultcastai_key');
 // "sso": true (users.issue_token); it is read here only to decide whether
 // to show a link, and the server checks the token as it always does.
 // Decided once, at load: a suite sign-in always ends in a fresh load of
-// this page (sso-callback.html). ConsultCastAI has one language, so the
+// this page (sso-callback.html). Hidden while a practice session runs
+// (setLiveChrome), since leaving the page then loses the session and its
+// debrief; it comes back with the debrief. ConsultCastAI has one language, so the
 // label follows the browser's, as the app switcher's labels do.
 // ES / FR / PT not yet reviewed by a native speaker. "Suite" is part of
 // the product name and stays as it is.
@@ -1343,11 +1345,16 @@ function signedInThroughSuite(token){
     return false;
   }
 }
+let suiteBackAllowed = false;    // signed in through the suite
+let suiteBackInSession = false;  // a practice session is running
+function syncSuiteBack(){
+  document.getElementById('suiteBackLink').classList.toggle('hidden', !suiteBackAllowed || suiteBackInSession);
+}
 function setupSuiteBack(){
-  const link = document.getElementById('suiteBackLink');
   const lang = String(navigator.language || 'en').toLowerCase().split('-')[0];
   document.getElementById('suiteBackText').textContent = SUITE_BACK_LABELS[lang] || SUITE_BACK_LABELS.en;
-  link.classList.toggle('hidden', !signedInThroughSuite(TOKEN));
+  suiteBackAllowed = signedInThroughSuite(TOKEN);
+  syncSuiteBack();
 }
 setupSuiteBack();
 document.getElementById('apiBase').value = API_BASE;
@@ -4400,6 +4407,8 @@ function setLiveChrome(on){
   document.getElementById('livePill').classList.toggle('hidden', !on);
   document.getElementById('headerTimer').classList.toggle('hidden', !on);
   document.getElementById('videoCallRow').classList.toggle('hidden', !on);
+  suiteBackInSession = on; // "Back to Suite" steps aside for the session
+  syncSuiteBack();
 }
 
 // The persona's tile shows their still photo (or initials) until/unless a
