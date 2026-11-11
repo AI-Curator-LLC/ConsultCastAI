@@ -1329,9 +1329,9 @@ localStorage.removeItem('consultcastai_key');
 // "sso": true (users.issue_token); it is read here only to decide whether
 // to show a link, and the server checks the token as it always does.
 // Decided once, at load: a suite sign-in always ends in a fresh load of
-// this page (sso-callback.html). Hidden while a practice session runs
-// (setLiveChrome), since leaving the page then loses the session and its
-// debrief; it comes back with the debrief. ConsultCastAI has one language, so the
+// this page (sso-callback.html). It stays up during a practice session
+// too; leaving through it then asks first and shuts the session down
+// (leaveForSuite, shutDownForLeaving). ConsultCastAI has one language, so the
 // label follows the browser's, as the app switcher's labels do. The words
 // are the suite's own name for its home, as in the star menu and the other
 // apps' Command Center link (ES / FR / PT not yet reviewed by a native
@@ -1350,16 +1350,30 @@ function signedInThroughSuite(token){
     return false;
   }
 }
-let suiteBackAllowed = false;    // signed in through the suite
-let suiteBackInSession = false;  // a practice session is running
-function syncSuiteBack(){
-  document.getElementById('suiteBackLink').classList.toggle('hidden', !suiteBackAllowed || suiteBackInSession);
-}
+const SUITE_LEAVE_PROMPTS = {
+  en: 'Leave this practice session? It ends now, without a debrief.',
+  es: '¿Salir de esta sesión de práctica? Termina ahora, sin informe.',
+  fr: 'Quitter cette séance d’entraînement ? Elle se termine maintenant, sans compte rendu.',
+  pt: 'Sair desta sessão de prática? Ela termina agora, sem relatório.',
+};
+let sessionLive = false; // a practice session is on screen (setLiveChrome)
 function setupSuiteBack(){
   const lang = String(navigator.language || 'en').toLowerCase().split('-')[0];
+  const link = document.getElementById('suiteBackLink');
   document.getElementById('suiteBackText').textContent = SUITE_BACK_LABELS[lang] || SUITE_BACK_LABELS.en;
-  suiteBackAllowed = signedInThroughSuite(TOKEN);
-  syncSuiteBack();
+  link.classList.toggle('hidden', !signedInThroughSuite(TOKEN));
+  let leaving = false;
+  link.addEventListener('click', async e => {
+    if(!sessionLive) return;
+    e.preventDefault();
+    if(leaving || !confirm(SUITE_LEAVE_PROMPTS[lang] || SUITE_LEAVE_PROMPTS.en)) return;
+    leaving = true;
+    // Wait (briefly) for the server to stop the session's clock before
+    // going: a request still in flight when the page unloads can be lost.
+    const stopped = shutDownForLeaving();
+    await Promise.race([stopped, new Promise(r => setTimeout(r, 2500))]);
+    location.assign(link.href);
+  });
 }
 setupSuiteBack();
 document.getElementById('apiBase').value = API_BASE;
@@ -3626,8 +3640,26 @@ function stopSelfCamera(){
 // Full teardown on tab close: the avatar connection AND the camera
 // preview, unlike pauseSession()'s deliberately avatar-only stop.
 function stopAvatarAndCamera(){ stopAvatar(); stopSelfCamera(); }
+// Leaving the page mid-session, by any route (the Command Center link,
+// closing the tab, Back, typing another address): shut the session down
+// so nothing keeps running or charging. Pause does the local part (timer,
+// reply, avatar, speech, microphone); the camera goes too; and the
+// server's clock for the session is stopped with a request built to
+// outlive the page (keepalive), since the one Pause queues may not get
+// out in time. The Command Center link waits for that request to finish
+// before it leaves; on other exits it is best effort (a browser may drop
+// it, since the API is on another origin), and the avatar, microphone
+// and camera close with the page either way. Pausing on the server is
+// harmless if it's already paused. A page restored from the back/forward
+// cache comes back paused, with Resume to carry on.
+function shutDownForLeaving(){
+  if(!sessionLive || !sessionId) return Promise.resolve();
+  pauseSession();
+  stopAvatarAndCamera();
+  return api(`/sessions/${sessionId}/pause`, { method: 'POST', keepalive: true }).catch(() => {});
+}
 window.addEventListener('beforeunload', () => { if(anamActive) stopAvatarAndCamera(); });
-window.addEventListener('pagehide', () => { if(anamActive) stopAvatarAndCamera(); });
+window.addEventListener('pagehide', () => { shutDownForLeaving(); if(anamActive) stopAvatarAndCamera(); });
 
 // Cost-control safety net for the tab-backgrounded/computer-sleep case:
 // setInterval ticks (the hard-limit/idle checks in updateTimerDisplay, see
@@ -4412,8 +4444,7 @@ function setLiveChrome(on){
   document.getElementById('livePill').classList.toggle('hidden', !on);
   document.getElementById('headerTimer').classList.toggle('hidden', !on);
   document.getElementById('videoCallRow').classList.toggle('hidden', !on);
-  suiteBackInSession = on; // the Command Center link steps aside for the session
-  syncSuiteBack();
+  sessionLive = on; // leaving the page now shuts the session down (shutDownForLeaving)
 }
 
 // The persona's tile shows their still photo (or initials) until/unless a
