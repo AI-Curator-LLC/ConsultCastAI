@@ -48,6 +48,19 @@
   .brand img{height:38px; width:auto; display:block;}
   .brand-text{font-family:var(--font-display); font-size:19px; font-weight:700; letter-spacing:0.2px;}
   .brand-text .ai{background:linear-gradient(135deg, var(--blue-glow), var(--purple-glow)); -webkit-background-clip:text; background-clip:text; color:transparent;}
+  /* "Back to Suite": back to the suite home, in this tab, for someone who
+     signed in through the suite (setupSuiteBack). Outlined like the status
+     badge, since it is navigation rather than an action. */
+  .suite-back{
+    display:inline-flex; align-items:center; gap:6px; flex:none; padding:7px 12px 7px 9px; border-radius:10px;
+    font-size:13px; font-weight:600; white-space:nowrap; text-decoration:none; color:var(--text-dim);
+    background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.14);
+    transition:color .15s, border-color .15s, background .15s;
+  }
+  .suite-back svg{width:14px; height:14px; display:block; flex:none;}
+  .suite-back:hover{color:var(--text); border-color:var(--border-bright); background:rgba(91,127,255,0.08);}
+  .suite-back:focus-visible{outline:2px solid var(--blue-glow); outline-offset:2px; color:var(--text);}
+  .suite-back + .brand{margin-right:auto;} /* the logo stays beside it; the space goes before the right-hand controls */
 
   .conn{display:flex; align-items:center; gap:10px;}
   .live-pill{display:inline-flex; align-items:center; gap:8px; padding:7px 14px; border-radius:10px; font-size:13px; font-weight:600;
@@ -669,6 +682,11 @@
     .profile-wrap{margin-left:0;}
     .live-pill, .trial-pill, .timer-pill, #statusBadge{order:2;}
     .adv-panel{order:3;}
+    /* "Back to Suite" starts the line under the logo, so the logo line stays
+       as it is: the empty item breaks the line, and its negative margin
+       takes back the extra gap. Only while the link is showing. */
+    .suite-back{order:2; min-height:40px; padding:0 12px 0 9px;}
+    header:has(.suite-back:not(.hidden))::after{content:''; order:1; flex-basis:100%; height:0; margin-top:-10px;}
     /* thumb-sized controls */
     .profile-avatar{width:40px; height:40px;}
     .ctl, .mic-btn, .btn-uniform, .composer input{min-height:44px;}
@@ -682,6 +700,10 @@
 <div class="wrap">
 
   <header>
+    <a class="suite-back hidden" id="suiteBackLink" href="https://aicsuite.ai-curator.ai/">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
+      <span id="suiteBackText">Back to Suite</span>
+    </a>
     <div class="brand">
       <img src="assets/ccai-icon.png" alt="ConsultCastAI" />
       <span class="brand-text">ConsultCast<span class="ai">AI</span></span>
@@ -1297,6 +1319,37 @@ document.getElementById('authAgreeLink').href = USER_AGREEMENT_URL;
 // old manually-typed API key, so drop any leftover one.
 let TOKEN = localStorage.getItem('consultcastai_token') || '';
 localStorage.removeItem('consultcastai_key');
+
+// "Back to Suite" in the header, for someone who signed in through the
+// suite. That sign-in is recorded in this app's own login token as
+// "sso": true (users.issue_token); it is read here only to decide whether
+// to show a link, and the server checks the token as it always does.
+// Decided once, at load: a suite sign-in always ends in a fresh load of
+// this page (sso-callback.html). ConsultCastAI has one language, so the
+// label follows the browser's, as the app switcher's labels do.
+// ES / FR / PT not yet reviewed by a native speaker. "Suite" is part of
+// the product name and stays as it is.
+const SUITE_BACK_LABELS = {
+  en: 'Back to Suite',
+  es: 'Volver a la Suite',
+  fr: 'Retour à la Suite',
+  pt: 'Voltar para a Suite',
+};
+function signedInThroughSuite(token){
+  try{
+    const payload = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    return JSON.parse(atob(payload)).sso === true;
+  }catch(_){
+    return false;
+  }
+}
+function setupSuiteBack(){
+  const link = document.getElementById('suiteBackLink');
+  const lang = String(navigator.language || 'en').toLowerCase().split('-')[0];
+  document.getElementById('suiteBackText').textContent = SUITE_BACK_LABELS[lang] || SUITE_BACK_LABELS.en;
+  link.classList.toggle('hidden', !signedInThroughSuite(TOKEN));
+}
+setupSuiteBack();
 document.getElementById('apiBase').value = API_BASE;
 
 let personas = [];
