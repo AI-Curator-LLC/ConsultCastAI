@@ -15,21 +15,13 @@
                   it out for an app with one language, and the browser's
                   language is used
 
-   Every link leads to the named tab of its destination, the same names
-   the suite home uses for Launch: if that tab is already open it is
-   brought to the front as it is, not reloaded; otherwise a new tab is
-   opened with that name. This page is never navigated away from. No
-   noopener on these links: the tabs have to stay tied together to be
-   found by name. With single sign-on on, the other app opens already
-   signed in.
+   Every link opens in this same tab, like Launch on the suite home. With
+   single sign-on on, the other app opens already signed in.
 
    The list itself is shown in a frame served by the suite
-   (menu/apps.html there). A browser lets a page switch to a tab by name
-   only when its own address opened that tab or shares its address, so
-   from this app's address another app's tab cannot be reached and a
-   second copy would open. From the suite's address every tab can. The
-   links this file draws are the fallback: they show until the frame says
-   it is ready, and stay if it never loads. */
+   (menu/apps.html there), whose links also open in this tab. The links
+   this file draws are the fallback: they show until the frame says it is
+   ready, and stay if it never loads. */
 (function(){
   const tag = document.currentScript;
   if(!tag) return;
@@ -41,8 +33,6 @@
   const SUITE = 'https://aicsuite.ai-curator.ai/index.html';
   const SUITE_ORIGIN = new URL(SUITE).origin;
   const SUITE_MENU = SUITE_ORIGIN + '/menu/apps.html';
-  const SUITE_TAB = 'aiccs-command-center';
-  const appTab = key => 'aiccs-' + key;
   // Product names are never translated. The dot colors are the suite's.
   const APPS = [
     { key: 'consultcastai', name: 'ConsultCastAI', url: 'https://consultcastai.ai-curator.ai/', color: '#19d7ff' },
@@ -109,34 +99,19 @@
     menu.setAttribute('role', 'menu');
     menu.hidden = true;
 
-    function link(url, tab, cls){
+    // A plain link: it opens in this same tab.
+    function link(url, cls){
       const a = document.createElement('a');
       a.href = url;
-      a.target = tab;
       a.setAttribute('role', 'menuitem');
       if(cls) a.className = cls;
-      a.addEventListener('click', (e) => {
-        if(e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
-        e.preventDefault();
-        show(url, tab);
-      });
       return a;
-    }
-    // The tab with this name, brought to the front as it is. If there is
-    // none the browser hands back a new blank one, and that is sent to url.
-    function show(url, tab){
-      let win = window.open('', tab);
-      if(!win) return;
-      let fresh = false;
-      try{ fresh = win.location.href === 'about:blank'; }catch(_){ /* the page already open there */ }
-      if(fresh) win = window.open(url, tab) || win;
-      win.focus();
     }
     // This file's own links, the fallback for the suite's frame.
     const own = document.createElement('div');
     own.className = 'aic-switch-own';
     menu.appendChild(own);
-    const home = link(SUITE, SUITE_TAB, 'aic-home');
+    const home = link(SUITE, 'aic-home');
     const homeIcon = document.createElement('img');
     homeIcon.src = ICON;
     homeIcon.alt = '';
@@ -147,7 +122,7 @@
     sep.className = 'aic-switch-sep';
     own.appendChild(sep);
     APPS.filter(app => app.key !== HERE).forEach(app => {
-      const a = link(app.url, appTab(app.key));
+      const a = link(app.url);
       const dot = document.createElement('span');
       dot.className = 'aic-switch-dot';
       dot.style.background = app.color;
