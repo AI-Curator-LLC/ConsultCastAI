@@ -405,6 +405,14 @@ const CloudFolder = (() => {
   // ---- the dialogs (their own look, so the apps need no styles) ---------------------------
   const FILE_ICON = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M14 3H6.5A1.5 1.5 0 0 0 5 4.5v15A1.5 1.5 0 0 0 6.5 21h11a1.5 1.5 0 0 0 1.5-1.5V8z"/><path d="M14 3v5h5"/></svg>';
   const FOLDER_ICON = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M3 6.5A2.5 2.5 0 0 1 5.5 4h4l2 2.2h7A2.5 2.5 0 0 1 21 8.7v8.8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/></svg>';
+  // The three places' icons: plain line drawings in the suite's own style, never a
+  // company's logo (a cloud, a storage drive, a folder); our own constants.
+  const SVG = d => '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + d + '</svg>';
+  const PLACE_ICON = {
+    onedrive: SVG('<path d="M7 18.5h10.5a4 4 0 0 0 .6-7.95A5.5 5.5 0 0 0 7.6 9.1 4.75 4.75 0 0 0 7 18.5z"/>'),
+    gdrive: SVG('<rect x="3.5" y="13" width="17" height="6" rx="2"/><path d="M5.2 13 8 6.2A2 2 0 0 1 9.85 5h4.3a2 2 0 0 1 1.85 1.2L18.8 13"/><path d="M16.5 16h.01M13.5 16h.01"/>'),
+    local: SVG('<path d="M3.5 7.5A2 2 0 0 1 5.5 5.5h3.8l2 2.2h7.2a2 2 0 0 1 2 2v7.8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/>'),
+  };
   function el(tag, cls, text) { const n = document.createElement(tag); if (cls) n.className = cls; if (text !== undefined) n.textContent = text; return n; }
   // The look comes from the suite's css/cloudfolder.css (a stylesheet, which
   // the suite's strict pages allow where an inline style is refused).
@@ -445,17 +453,18 @@ const CloudFolder = (() => {
       const f = el('form'); f.method = 'dialog';
       const h = el('h2', null, say('where')); h.id = 'aiccs-cf-h';
       f.append(h, el('p', null, say('whereP')));
-      const opt = (cls, mark, title, sub, onclick) => {
+      const opt = (cls, icon, title, sub, onclick) => {
         const b = el('button', 'aiccs-cf-opt ' + cls); b.type = 'button';
-        const i = el('i', null, mark); i.setAttribute('aria-hidden', 'true');
+        const i = el('i'); i.setAttribute('aria-hidden', 'true');
+        i.innerHTML = PLACE_ICON[icon];      // our own constant icon
         const tx = el('span'); tx.append(el('b', null, title), el('small', null, sub));
         b.append(i, tx); b.onclick = onclick; return b;
       };
-      [['onedrive', od, 'aiccs-cf-od', 'OD', 'od', 'odSub'], ['gdrive', gd, 'aiccs-cf-gd', 'GD', 'gd', 'gdSub']].forEach(([p, st, cls, mark, key, sub]) => {
+      [['onedrive', od, 'aiccs-cf-od', 'od', 'odSub'], ['gdrive', gd, 'aiccs-cf-gd', 'gd', 'gdSub']].forEach(([p, st, cls, key, sub]) => {
         if (only && only !== p) return;
         const ready = st === 'ready';
         const subText = ready ? say(sub) : say(st === 'no_files' ? 'allow' : 'connect', { name: NAMES[p] });
-        f.append(opt(cls, mark, say(key), subText, async () => {
+        f.append(opt(cls, p, say(key), subText, async () => {
           if (!ready) { location.href = connectUrl(p); return; }   // back to the chooser after Microsoft or Google
           away = true; d.close();
           const picked = await browse(p);
@@ -464,7 +473,7 @@ const CloudFolder = (() => {
         }));
       });
       if (localPick) {
-        f.append(opt('aiccs-cf-lo', '', say('local'), say('localP'), async () => {
+        f.append(opt('aiccs-cf-lo', 'local', say('local'), say('localP'), async () => {
           away = true; d.close();
           const h2 = await localPick();
           if (h2) await forget();
