@@ -56,7 +56,21 @@ const CloudFolder = (() => {
           whySave: "The suite couldn't keep this folder as your clients folder. Click Use this folder again. If it keeps happening, send AI Curator support the reference shown here.",
           ref: "Reference: {ref}",
           retry: "Try again",
-          reconnect: "Reconnect {name}" },
+          reconnect: "Reconnect {name}",
+          pNetwork: "Your clients folder in {name} can't be reached right now: the internet connection dropped, or something blocked it. It is still saved on your account.",
+          pBusy: "{name} is not answering right now, so your clients folder ({folder}) can't be opened yet. It is still saved on your account.",
+          pSuite: "The suite couldn't check your clients folder just now. Nothing was changed: your folder is still saved on your account.",
+          pNotConnected: "Your clients folder ({folder}) is in {name}, and {name} needs to be connected again before it can be opened. The folder is still saved on your account.",
+          pNoFiles: "Your clients folder ({folder}) is in {name}, but the connection doesn't allow files yet. Reconnect and allow files.",
+          pAccount: "Your clients folder ({folder}) is in {name}, but the Microsoft account connected now can't open it. Reconnect {name} with the account that holds the folder.",
+          pGone: "Your clients folder ({folder}) can't be found in {name}. It was moved, renamed or deleted, or {name} is connected with a different account.",
+          pOther: "{name} answered with an error, so your clients folder ({folder}) can't be opened yet. It is still saved on your account.",
+          chooseAgain: "Choose the folder again",
+          checking: "Checking...",
+          pWith: "It was chosen with {account}.",
+          useLocal: "Open the copy on this computer for now",
+          localNote: "{name} can't be opened right now, so you are working in the copy of your clients folder on this computer. Your {name} folder is still saved on your account.",
+          tryCloud: "Try {name} again" },
     es: { where: '¿Dónde está su carpeta de clientes?', whereP: 'Elíjala una vez. La suite y las tres aplicaciones la abrirán solas al iniciar sesión, en cualquier navegador.',
           od: 'Elegir carpeta en OneDrive', gd: 'Elegir carpeta en Google Drive', local: 'Usar una carpeta de este equipo',
           localP: 'Solo en este navegador de este equipo, y puede volver a pedirla al cerrarlo.',
@@ -77,7 +91,21 @@ const CloudFolder = (() => {
           whySave: "La suite no pudo guardar esta carpeta como su carpeta de clientes. Vuelva a hacer clic en Usar esta carpeta. Si sigue ocurriendo, envíe al soporte de AI Curator la referencia que se muestra aquí.",
           ref: "Referencia: {ref}",
           retry: "Intentar de nuevo",
-          reconnect: "Volver a conectar {name}" },
+          reconnect: "Volver a conectar {name}",
+          pNetwork: "No se puede acceder a su carpeta de clientes en {name} en este momento: se cortó la conexión a internet o algo la bloqueó. Sigue guardada en su cuenta.",
+          pBusy: "{name} no responde en este momento, así que su carpeta de clientes ({folder}) aún no se puede abrir. Sigue guardada en su cuenta.",
+          pSuite: "La suite no pudo comprobar su carpeta de clientes ahora. No se cambió nada: su carpeta sigue guardada en su cuenta.",
+          pNotConnected: "Su carpeta de clientes ({folder}) está en {name}, y hay que volver a conectar {name} para poder abrirla. La carpeta sigue guardada en su cuenta.",
+          pNoFiles: "Su carpeta de clientes ({folder}) está en {name}, pero la conexión aún no permite archivos. Vuelva a conectarlo y permita los archivos.",
+          pAccount: "Su carpeta de clientes ({folder}) está en {name}, pero la cuenta Microsoft conectada ahora no puede abrirla. Vuelva a conectar {name} con la cuenta que tiene la carpeta.",
+          pGone: "No se encuentra su carpeta de clientes ({folder}) en {name}. Se movió, se cambió de nombre o se eliminó, o {name} está conectado con otra cuenta.",
+          pOther: "{name} respondió con un error, así que su carpeta de clientes ({folder}) aún no se puede abrir. Sigue guardada en su cuenta.",
+          chooseAgain: "Elegir la carpeta de nuevo",
+          checking: "Comprobando...",
+          pWith: "Se eligió con {account}.",
+          useLocal: "Abrir la copia de este equipo por ahora",
+          localNote: "{name} no se puede abrir en este momento, así que está trabajando en la copia de su carpeta de clientes de este equipo. Su carpeta de {name} sigue guardada en su cuenta.",
+          tryCloud: "Probar {name} de nuevo" },
     fr: { where: 'Où est votre dossier clients ?', whereP: 'Choisissez-le une fois. La suite et les trois applications l\'ouvriront seules à la connexion, dans n\'importe quel navigateur.',
           od: 'Choisir un dossier dans OneDrive', gd: 'Choisir un dossier dans Google Drive', local: 'Utiliser un dossier de cet ordinateur',
           localP: 'Seulement dans ce navigateur sur cet ordinateur, et il peut le redemander après la fermeture.',
@@ -98,7 +126,21 @@ const CloudFolder = (() => {
           whySave: "La suite n'a pas pu garder ce dossier comme dossier clients. Cliquez à nouveau sur Utiliser ce dossier. Si cela continue, envoyez au support AI Curator la référence affichée ici.",
           ref: "Référence : {ref}",
           retry: "Réessayer",
-          reconnect: "Reconnecter {name}" },
+          reconnect: "Reconnecter {name}",
+          pNetwork: "Votre dossier clients dans {name} est inaccessible pour le moment : la connexion internet a été coupée, ou quelque chose l'a bloquée. Il est toujours enregistré sur votre compte.",
+          pBusy: "{name} ne répond pas pour le moment, votre dossier clients ({folder}) ne peut donc pas encore être ouvert. Il est toujours enregistré sur votre compte.",
+          pSuite: "La suite n'a pas pu vérifier votre dossier clients à l'instant. Rien n'a été modifié : votre dossier est toujours enregistré sur votre compte.",
+          pNotConnected: "Votre dossier clients ({folder}) est dans {name}, et {name} doit être reconnecté avant de pouvoir l'ouvrir. Le dossier est toujours enregistré sur votre compte.",
+          pNoFiles: "Votre dossier clients ({folder}) est dans {name}, mais la connexion n'autorise pas encore les fichiers. Reconnectez-vous et autorisez les fichiers.",
+          pAccount: "Votre dossier clients ({folder}) est dans {name}, mais le compte Microsoft connecté actuellement ne peut pas l'ouvrir. Reconnectez {name} avec le compte qui contient le dossier.",
+          pGone: "Votre dossier clients ({folder}) est introuvable dans {name}. Il a été déplacé, renommé ou supprimé, ou {name} est connecté avec un autre compte.",
+          pOther: "{name} a répondu par une erreur, votre dossier clients ({folder}) ne peut donc pas encore être ouvert. Il est toujours enregistré sur votre compte.",
+          chooseAgain: "Choisir à nouveau le dossier",
+          checking: "Vérification...",
+          pWith: "Il a été choisi avec {account}.",
+          useLocal: "Ouvrir la copie de cet ordinateur pour l'instant",
+          localNote: "{name} ne peut pas être ouvert pour le moment, vous travaillez donc dans la copie de votre dossier clients sur cet ordinateur. Votre dossier {name} est toujours enregistré sur votre compte.",
+          tryCloud: "Réessayer {name}" },
     pt: { where: 'Onde está sua pasta de clientes?', whereP: 'Escolha uma vez. A suíte e os três aplicativos a abrem sozinhos quando você entra, em qualquer navegador.',
           od: 'Escolher pasta no OneDrive', gd: 'Escolher pasta no Google Drive', local: 'Usar uma pasta deste computador',
           localP: 'Só neste navegador deste computador, e ele pode pedir de novo depois que você fechar.',
@@ -119,7 +161,21 @@ const CloudFolder = (() => {
           whySave: "A suíte não conseguiu guardar esta pasta como sua pasta de clientes. Clique em Usar esta pasta de novo. Se continuar acontecendo, envie ao suporte da AI Curator a referência mostrada aqui.",
           ref: "Referência: {ref}",
           retry: "Tentar de novo",
-          reconnect: "Reconectar {name}" },
+          reconnect: "Reconectar {name}",
+          pNetwork: "Sua pasta de clientes no {name} não pode ser acessada agora: a conexão com a internet caiu, ou algo a bloqueou. Ela continua salva na sua conta.",
+          pBusy: "O {name} não está respondendo agora, então sua pasta de clientes ({folder}) ainda não pode ser aberta. Ela continua salva na sua conta.",
+          pSuite: "A suíte não conseguiu verificar sua pasta de clientes agora. Nada foi alterado: sua pasta continua salva na sua conta.",
+          pNotConnected: "Sua pasta de clientes ({folder}) está no {name}, e o {name} precisa ser conectado de novo para abri-la. A pasta continua salva na sua conta.",
+          pNoFiles: "Sua pasta de clientes ({folder}) está no {name}, mas a conexão ainda não permite arquivos. Reconecte e permita os arquivos.",
+          pAccount: "Sua pasta de clientes ({folder}) está no {name}, mas a conta Microsoft conectada agora não consegue abri-la. Reconecte o {name} com a conta que tem a pasta.",
+          pGone: "Sua pasta de clientes ({folder}) não foi encontrada no {name}. Ela foi movida, renomeada ou excluída, ou o {name} está conectado com outra conta.",
+          pOther: "O {name} respondeu com um erro, então sua pasta de clientes ({folder}) ainda não pode ser aberta. Ela continua salva na sua conta.",
+          chooseAgain: "Escolher a pasta de novo",
+          checking: "Verificando...",
+          pWith: "Ela foi escolhida com {account}.",
+          useLocal: "Abrir a cópia deste computador por enquanto",
+          localNote: "O {name} não pode ser aberto agora, então você está trabalhando na cópia da sua pasta de clientes neste computador. Sua pasta do {name} continua salva na sua conta.",
+          tryCloud: "Tentar o {name} de novo" },
   };
   function say(key, vars) {
     const l = String((typeof document !== 'undefined' && document.documentElement.lang) || 'en').slice(0, 2);
@@ -143,18 +199,32 @@ const CloudFolder = (() => {
     if (!r.ok) throw new CloudError((data && data.detail && data.detail.code) || (data && data.code) || 'suite_' + r.status, 'suite ' + r.status);
     return data;
   }
-  const tokens = {};
+  const tokens = {}, asking = {};
+  let choosing = false;      // the folder browser is open: any connected account may be browsed
   // A token for this provider, or a CloudError: 'not_connected' or 'no_files'.
-  async function token(provider) {
-    const kept = tokens[provider];
-    if (kept && kept.until > Date.now()) return kept.access;
+  // For the kept folder the suite only gives the token of the Microsoft account
+  // the folder belongs to (onedrive_files.py): never another account's.
+  // Every call on the page waits for the same answer: one request, not one each.
+  function token(provider) {
+    const slot = provider + (choosing ? ':browse' : '');
+    const kept = tokens[slot];
+    if (kept && kept.until > Date.now()) return Promise.resolve(kept.access);
+    if (!asking[slot]) asking[slot] = tokenNow(provider, slot).finally(() => { delete asking[slot]; });
+    return asking[slot];
+  }
+  async function tokenNow(provider, slot) {
     let got;
     // the suite's own reason rides along (microsoft_reconnect, onedrive_not_connected, microsoft_unavailable)
-    try { got = await suite('/integrations/' + SOURCE[provider] + '/token'); } catch (e) { throw Object.assign(new CloudError('not_connected', e.message), { detail: e.code }); }
+    try { got = await suite('/integrations/' + SOURCE[provider] + '/token' + (slot.endsWith(':browse') && provider === 'onedrive' ? '?purpose=browse' : '')); } catch (e) {
+      // the suite itself didn't answer (offline, a restart): never "not connected"
+      if (!(e instanceof CloudError)) throw new CloudError('network', e.message);
+      if (/^suite_(429|5\d\d)$/.test(e.code)) throw Object.assign(new CloudError('http_503', e.message), { status: 503, detail: e.code });
+      throw Object.assign(new CloudError('not_connected', e.message), { detail: e.code });
+    }
     if (!got || !got.access_token) throw new CloudError('not_connected', 'no token');
     if (Array.isArray(got.scopes) && !got.scopes.some(s => s === SCOPE[provider] || s.endsWith('/' + SCOPE[provider]))) throw new CloudError('no_files', 'files not allowed');
     const until = got.expires_at ? Date.parse(got.expires_at) - 60000 : Date.now() + 5 * 60000;
-    tokens[provider] = { access: got.access_token, until };
+    tokens[slot] = { access: got.access_token, until };
     return got.access_token;
   }
   // Microsoft's or Google's own words for a refusal: { code, hint } (the code is
@@ -174,7 +244,7 @@ const CloudFolder = (() => {
     try {
       r = await fetch(url, Object.assign({}, opts, { headers: Object.assign({ Authorization: 'Bearer ' + access }, (opts && opts.headers) || {}) }));
     } catch (e) { throw new CloudError('network', e.message); }      // offline, blocked by the network or an extension
-    if (r.status === 401 && !again) { delete tokens[provider]; return call(provider, url, opts, true); }
+    if (r.status === 401 && !again) { delete tokens[provider]; delete tokens[provider + ':browse']; return call(provider, url, opts, true); }
     if (r.status === 404) throw Object.assign(notFound(url), { status: 404 }, await refusalOf(r));
     if (!r.ok) throw Object.assign(new CloudError('http_' + r.status, url.split('?')[0] + ' ' + r.status), { status: r.status }, await refusalOf(r));
     return r;
@@ -221,6 +291,8 @@ const CloudFolder = (() => {
       const item = await json('onedrive', GRAPH + '/me/drive/root?$select=id,name,folder,parentReference,lastModifiedDateTime');
       return this.node(item);
     },
+    // the folder itself, by its ids: can this connection open it?
+    async probe(folder) { await json('onedrive', `${GRAPH}/drives/${folder.drive_id}/items/${folder.item_id}?$select=id`); },
     async list(dir) {
       const out = [];
       let url = `${GRAPH}/drives/${dir.driveId}/items/${dir.id}/children?$select=id,name,folder,file,size,lastModifiedDateTime,parentReference&$top=200`;
@@ -273,6 +345,10 @@ const CloudFolder = (() => {
       return { id: f.id, name: f.name, dir: f.mimeType === FOLDER_MIME, modified: Date.parse(f.modifiedTime) || Date.now(), size: Number(f.size) || 0 };
     },
     async top() { return this.node(await json('gdrive', DRIVE + '/files/root?fields=id,name,mimeType,modifiedTime')); },
+    async probe(folder) {
+      const f = await json('gdrive', `${DRIVE}/files/${folder.item_id}?fields=id,trashed&supportsAllDrives=true`);
+      if (f && f.trashed) throw Object.assign(notFound(folder.item_id), { status: 404 });
+    },
     async list(dir) {
       const out = [];
       let pageToken = '';
@@ -314,11 +390,43 @@ const CloudFolder = (() => {
   };
   const API = { onedrive: OneDrive, gdrive: GDrive };
 
+  // ---- fewer calls ---------------------------------------------------------------------
+  // OneDrive and Google Drive answer slowly when asked many things at once, so a
+  // page asks for a folder's listing once and finds each file's id in it, instead
+  // of asking for every file by name. A listing is trusted for a short while and
+  // only for names it has: a name it doesn't have is always asked for.
+  const LIST_FRESH = 45000;
+  const listings = new Map();      // provider:drive:folder id -> { at, byName: Promise<Map> }
+  const listKey = (provider, dir) => provider + ':' + (dir.driveId || '') + ':' + dir.id;
+  function listed(provider, dir, fresh) {
+    const key = listKey(provider, dir), hit = listings.get(key);
+    if (hit && !fresh && Date.now() - hit.at < LIST_FRESH) return hit.byName;
+    const items = API[provider].list(dir);
+    const entry = { at: Date.now(), items, byName: items.then(list => new Map(list.map(n => [n.name, n]))) };
+    listings.set(key, entry);
+    entry.byName.catch(() => { if (listings.get(key) === entry) listings.delete(key); });
+    return entry.byName;
+  }
+  async function find(provider, dir, name) {
+    let known = null;
+    try { known = (await listed(provider, dir)).get(name); } catch (e) { /* asked for by name below */ }
+    if (known) return known;
+    const n = await API[provider].child(dir, name);          // not in the listing: asked for, so a new file is never missed
+    const hit = listings.get(listKey(provider, dir));
+    if (hit) hit.byName.then(m => m.set(n.name, n), () => {});
+    return n;
+  }
+  function remember(provider, dir, node, gone) {
+    const hit = listings.get(listKey(provider, dir));
+    if (hit) hit.byName.then(m => { if (gone) m.delete(node.name); else m.set(node.name, node); }, () => {});
+  }
+
   // ---- folder and file handles, as clientfile.js expects them ---------------------------
   class CloudFile {
     constructor(provider, node) { this.kind = 'file'; this.name = node.name; this.provider = provider; this.node = node; }
     async getFile() {
-      const blob = await API[this.provider].read(this.node);
+      let blob;
+      try { blob = await API[this.provider].read(this.node); } catch (e) { if (e && e.name === 'NotFoundError') listings.clear(); throw e; }
       return new File([blob], this.name, { type: blob.type || 'application/json', lastModified: this.node.modified });
     }
     async createWritable() {
@@ -343,31 +451,38 @@ const CloudFolder = (() => {
   class CloudDir {
     constructor(provider, node, label) { this.kind = 'directory'; this.name = node.name; this.provider = provider; this.node = node; this.label = label || ''; this.cloud = true; }
     async *values() {
-      for (const n of await API[this.provider].list(this.node)) yield n.dir ? new CloudDir(this.provider, n) : new CloudFile(this.provider, n);
+      const byName = await listed(this.provider, this.node, true);       // a listing asked for is always a new one
+      for (const n of byName.values()) yield n.dir ? new CloudDir(this.provider, n) : new CloudFile(this.provider, n);
     }
     async *entries() { for await (const h of this.values()) yield [h.name, h]; }
     async getFileHandle(name, opts) {
       try {
-        const n = await API[this.provider].child(this.node, name);
+        const n = await find(this.provider, this.node, name);
         if (n.dir) { const e = new Error('is a folder'); e.name = 'TypeMismatchError'; throw e; }
         return new CloudFile(this.provider, n);
       } catch (e) {
         if (e.name !== 'NotFoundError' || !(opts && opts.create)) throw e;
-        return new CloudFile(this.provider, await API[this.provider].create(this.node, name));
+        const made = await API[this.provider].create(this.node, name);
+        remember(this.provider, this.node, made);
+        return new CloudFile(this.provider, made);
       }
     }
     async getDirectoryHandle(name, opts) {
       try {
-        const n = await API[this.provider].child(this.node, name);
+        const n = await find(this.provider, this.node, name);
         if (!n.dir) { const e = new Error('is a file'); e.name = 'TypeMismatchError'; throw e; }
         return new CloudDir(this.provider, n);
       } catch (e) {
         if (e.name !== 'NotFoundError' || !(opts && opts.create)) throw e;
-        return new CloudDir(this.provider, await API[this.provider].mkdir(this.node, name));
+        const made = await API[this.provider].mkdir(this.node, name);
+        remember(this.provider, this.node, made);
+        return new CloudDir(this.provider, made);
       }
     }
     async removeEntry(name) {
-      await API[this.provider].remove(await API[this.provider].child(this.node, name));
+      const n = await find(this.provider, this.node, name);
+      await API[this.provider].remove(n);
+      remember(this.provider, this.node, n, true);
     }
     async queryPermission() { return 'granted'; }
     async requestPermission() { return 'granted'; }
@@ -379,28 +494,153 @@ const CloudFolder = (() => {
   }
 
   // ---- on page load: the account's folder, if there is one and it can be reached ---------
-  let saved;     // undefined: not asked yet; null: none
+  let saved;     // undefined: not asked yet (or the suite didn't answer); null: none
   let providers = {};
-  async function current() {
-    if (saved === undefined) {
-      try {
-        const got = await suite('/cloud-folder/current');
-        saved = got.folder || null;
-        providers = got.providers || {};
-      } catch (e) { saved = null; }
+  let unknown = false;     // the account couldn't be asked: never the same as "no folder"
+  const sleep = ms => new Promise(done => setTimeout(done, ms));
+  const WAITS = [0, 600, 1800];     // a slow or busy answer is asked for again before anything is decided
+  // a failure worth asking again: offline for a moment, busy, a server restarting
+  const passing = e => { const c = String((e && e.code) || ''), st = (e && e.status) || 0; return c === 'network' || st === 429 || st >= 500 || (e && e.detail === 'microsoft_unavailable'); };
+  async function current(fresh) {
+    if (saved === undefined || fresh) {
+      unknown = true;
+      for (const wait of WAITS) {
+        if (wait) await sleep(wait);
+        try {
+          const got = await suite('/cloud-folder/current');
+          saved = got.folder || null;
+          providers = got.providers || {};
+          unknown = false;
+          break;
+        } catch (e) {
+          if (e instanceof CloudError && !/^suite_(429|5\d\d)$/.test(e.code)) { saved = null; unknown = false; break; }   // signed out: the page goes to sign-in
+          // in an app, a suite that can't be reached means no suite account here (or it is blocked):
+          // the app carries on with a folder on this computer, as it always has
+          if (SUITE && !(e instanceof CloudError)) { saved = null; unknown = false; break; }
+        }
+      }
+      if (unknown && saved === undefined) return null;
     }
     return saved;
   }
-  async function restore() {
-    const folder = await current();
-    if (!folder || providers[folder.provider] !== 'ready') return null;   // not connected now: the local folder, if any
-    try { await token(folder.provider); } catch (e) { return null; }
-    return handleFor(folder);
+  const folderName = folder => (folder && folder.path && folder.path.length ? folder.path[folder.path.length - 1] : '') || (folder ? NAMES[folder.provider] : '');
+  // Why the account's folder can't be opened now: { provider, folder, key, ref, fix }.
+  // fix: 'retry', 'reconnect' or 'choose' (the one button).
+  function problemOf(folder, e) {
+    const provider = folder ? folder.provider : '';
+    if (!folder) return { provider: '', folder: '', key: 'pSuite', ref: '', fix: 'retry' };
+    const w = why(provider, e, false);
+    const st = (e && e.status) || 0;
+    if (e && e.detail === 'onedrive_other_account') return { provider, folder: folderName(folder), account: folder.account || '', key: 'pAccount', ref: w.ref, fix: 'reconnect' };
+    const key = { whyNetwork: 'pNetwork', whyBusy: 'pBusy', whyNotConnected: 'pNotConnected', whyReconnect: 'pNotConnected', whyNoFiles: 'pNoFiles',
+                  whyNoDrive: 'pAccount', whyDenied: 'pAccount', whyGone: 'pGone' }[w.key] || (st === 400 ? 'pAccount' : 'pOther');
+    const fix = key === 'pGone' ? 'choose' : key === 'pNotConnected' || key === 'pNoFiles' || key === 'pAccount' ? 'reconnect' : 'retry';
+    return { provider, folder: folderName(folder), account: folder.account || '', key, ref: w.ref, fix };
   }
+  // The account's folder, checked: { state: 'ready', handle } when this connection can open it,
+  // { state: 'none' } when the account has none, { state: 'problem', problem } when it has one that
+  // can't be opened now. A problem is never "none": the folder stays kept, and the page says why.
+  let opening = null;
+  function open(fresh) {
+    if (!opening || fresh) opening = openNow(!!fresh);
+    return opening;
+  }
+  async function openNow(fresh) {
+    const folder = await current(fresh);
+    if (unknown) return { state: 'problem', problem: problemOf(null) };
+    if (!folder) return { state: 'none' };
+    const fail = e => {
+      const problem = problemOf(folder, e);
+      logWhy(folder.provider, 'open', { key: problem.key, ref: problem.ref });
+      return { state: 'problem', problem };
+    };
+    const st = providers[folder.provider];
+    if (st !== 'ready') return fail(Object.assign(new CloudError(st === 'no_files' ? 'no_files' : 'not_connected', 'not ready'), st === 'other_account' ? { detail: 'onedrive_other_account' } : {}));
+    let err = null;
+    for (const wait of WAITS) {
+      if (wait) await sleep(wait);
+      try { await API[folder.provider].probe(folder); return { state: 'ready', handle: handleFor(folder) }; }
+      catch (e) { err = e; if (!passing(e)) break; delete tokens[folder.provider]; }
+    }
+    return fail(err);
+  }
+  // The folder's handle, or null (kept for the pages that only ask "is there one I can use")
+  async function restore() {
+    const got = await open();
+    return got.state === 'ready' ? got.handle : null;
+  }
+  // From the page that chose "a folder on this computer": the only thing that takes the folder off the account.
   async function forget() {
-    saved = null;
+    saved = null; opening = null;
     try { await suite('/cloud-folder/clear'); } catch (e) { /* kept on the account; the next choice replaces it */ }
   }
+
+  // ---- the bar: the account's folder can't be opened now, why, and one button -----------------
+  // The same on every page. Try again checks once more and, when the folder opens, loads the page
+  // again; Reconnect goes to Microsoft or Google and comes back to the Clients page with the kept
+  // folder; Choose the folder again opens that provider's folder browser.
+  // opts.local: this browser may still open the same folder on this computer; the bar then offers
+  // "Open the copy on this computer for now" (said, never done silently; the kept folder stays kept).
+  function showProblem(problem, opts) {
+    hideProblem();
+    if (!problem) return null;
+    const useLocal = opts && typeof opts.local === 'function' ? opts.local : null;
+    if (!styled) { const link = document.createElement('link'); link.rel = 'stylesheet'; link.href = SUITE + '/css/cloudfolder.css'; document.head.appendChild(link); styled = true; }
+    const name = NAMES[problem.provider] || 'OneDrive';
+    const bar = el('div', 'aiccs-cf-bar'); bar.id = 'aiccs-cf-bar'; bar.setAttribute('role', 'alert'); bar.dataset.key = problem.key;
+    const tx = el('div', 'aiccs-cf-bartext');
+    tx.append(el('b', null, say(problem.key, { name, folder: problem.folder || name })
+      + (problem.account && (problem.key === 'pAccount' || problem.key === 'pNotConnected') ? ' ' + say('pWith', { account: problem.account }) : '')));
+    if (problem.ref) tx.append(el('small', null, say('ref', { ref: problem.ref })));
+    bar.append(tx);
+    const again = el('button', 'aiccs-cf-btn' + (problem.fix === 'retry' ? ' primary' : ''), say('retry')); again.type = 'button'; again.id = 'aiccs-cf-bar-retry';
+    again.onclick = async () => {
+      again.disabled = true; again.textContent = say('checking');
+      const got = await open(true).catch(() => null);
+      if (got && got.state === 'ready') { location.reload(); return; }
+      showProblem(got && got.problem ? got.problem : problem, opts);
+    };
+    if (problem.fix === 'reconnect') {
+      const go = el('a', 'aiccs-cf-btn primary', say('reconnect', { name })); go.id = 'aiccs-cf-bar-go'; go.href = connectUrl(problem.provider || 'onedrive');
+      bar.append(go);
+    } else if (problem.fix === 'choose') {
+      const pick = el('button', 'aiccs-cf-btn primary', say('chooseAgain')); pick.type = 'button'; pick.id = 'aiccs-cf-bar-choose';
+      pick.onclick = async () => { const h = await start(problem.provider).catch(() => null); if (h) location.reload(); };
+      const go = el('a', 'aiccs-cf-btn', say('reconnect', { name })); go.id = 'aiccs-cf-bar-go'; go.href = connectUrl(problem.provider || 'onedrive');
+      bar.append(pick, go);
+    }
+    if (problem.fix === 'retry') bar.append(again);
+    if (useLocal) {
+      const lo = el('button', 'aiccs-cf-btn', say('useLocal')); lo.type = 'button'; lo.id = 'aiccs-cf-bar-local';
+      lo.onclick = async () => { lo.disabled = true; if (await useLocal()) location.reload(); else lo.disabled = false; };
+      bar.append(lo);
+    }
+    const host = document.querySelector('main') || document.body;
+    host.insertBefore(bar, host.firstChild);
+    return bar;
+  }
+  // Working in the copy on this computer because the kept folder can't be opened: said on every
+  // page, with the way back. Try again checks the kept folder and, when it opens, uses it again.
+  function showLocalNote(problem, back) {
+    hideProblem();
+    if (!styled) { const link = document.createElement('link'); link.rel = 'stylesheet'; link.href = SUITE + '/css/cloudfolder.css'; document.head.appendChild(link); styled = true; }
+    const name = NAMES[problem && problem.provider] || 'OneDrive';
+    const bar = el('div', 'aiccs-cf-bar aiccs-cf-barlocal'); bar.id = 'aiccs-cf-bar'; bar.setAttribute('role', 'status'); bar.dataset.key = 'localNote';
+    const tx = el('div', 'aiccs-cf-bartext'); tx.append(el('b', null, say('localNote', { name }))); bar.append(tx);
+    const again = el('button', 'aiccs-cf-btn', say('tryCloud', { name })); again.type = 'button'; again.id = 'aiccs-cf-bar-cloud';
+    again.onclick = async () => {
+      again.disabled = true; again.textContent = say('checking');
+      const got = await open(true).catch(() => null);
+      if (got && got.state === 'ready') { if (back) await back(); location.reload(); return; }
+      again.disabled = false; again.textContent = say('tryCloud', { name });
+    };
+    if (problem && problem.fix === 'reconnect') { const go = el('a', 'aiccs-cf-btn', say('reconnect', { name })); go.id = 'aiccs-cf-bar-go'; go.href = connectUrl(problem.provider || 'onedrive'); bar.append(go); }
+    bar.append(again);
+    const host = document.querySelector('main') || document.body;
+    host.insertBefore(bar, host.firstChild);
+    return bar;
+  }
+  function hideProblem() { const old = typeof document !== 'undefined' && document.getElementById('aiccs-cf-bar'); if (old) old.remove(); }
 
   // ---- the dialogs (their own look, so the apps need no styles) ---------------------------
   const FILE_ICON = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M14 3H6.5A1.5 1.5 0 0 0 5 4.5v15A1.5 1.5 0 0 0 6.5 21h11a1.5 1.5 0 0 0 1.5-1.5V8z"/><path d="M14 3v5h5"/></svg>';
@@ -495,7 +735,8 @@ const CloudFolder = (() => {
       const d = dialog('aiccs-cf-browse');
       const trail = [];        // [{ node, name }]
       let settled = false;
-      const done = v => { if (!settled) { settled = true; resolve(v); if (d.open) d.close(); d.remove(); } };
+      choosing = true;         // a folder is being chosen: whichever account is connected may be browsed
+      const done = v => { if (!settled) { settled = true; choosing = false; listings.clear(); resolve(v); if (d.open) d.close(); d.remove(); } };
       d.addEventListener('close', () => done(null));
       const f = el('form'); f.method = 'dialog';
       const h = el('h2', null, say('browseH', { name: NAMES[provider] })); h.id = 'aiccs-cf-browse-h';
@@ -567,11 +808,20 @@ const CloudFolder = (() => {
         const here = trail[trail.length - 1];
         const folder = { provider, item_id: here.node.id, drive_id: here.node.driveId || '', path: trail.slice(1).map(s => s.name) };
         use.disabled = true;
-        try { saved = (await suite('/cloud-folder', folder)).folder; } catch (e) {
+        // kept on the account first, then read back: only then is it done
+        try {
+          await suite('/cloud-folder', folder);
+          const got = await suite('/cloud-folder/current');
+          if (!got.folder || got.folder.item_id !== folder.item_id || got.folder.provider !== provider) throw new CloudError('not_kept', 'not kept');
+          saved = got.folder; providers = got.providers || providers; unknown = false;
+          choosing = false; delete tokens[provider];      // from here on: the kept folder's own account only
+        } catch (e) {
           use.disabled = false;
           note.textContent = say('whySave') + ' ' + say('ref', { ref: (e && e.code) || 'unknown' });
           return;
         }
+        opening = Promise.resolve({ state: 'ready', handle: handleFor(saved) });
+        hideProblem();
         done(handleFor(saved));
       };
       const begin = async () => {
@@ -600,6 +850,7 @@ const CloudFolder = (() => {
     } catch (e) { return ''; }
   }
 
-  return { restore, choose, browse, start, forget, current, returning, names: NAMES, label, say, CloudError, _api: API, _handleFor: handleFor, _why: why };
+  return { restore, open, problemOf, showProblem, showLocalNote, hideProblem, folderName, choose, browse, start, forget, current, returning, names: NAMES, label, say, CloudError,
+           _api: API, _handleFor: handleFor, _why: why };
 })();
 if (typeof module !== 'undefined') module.exports = CloudFolder;

@@ -343,17 +343,86 @@ const ClientFile = (function () {
     return p;
   }
 
+  // The account's folder in OneDrive or Google Drive, asked for and checked
+  // (js/cloudfolder.js open): 'ready' (DIR is set), 'none' (the account keeps
+  // none) or 'cloud' (it keeps one that can't be opened now). In the last case
+  // the page shows why with one button (CloudFolder.showProblem), and no other
+  // folder is ever opened in its place: the kept folder is only changed by the
+  // consultant choosing another.
+  let CLOUD_PROBLEM = null;
+  async function cloudFirst(fresh) {
+    if (!cloud() || typeof CloudFolder.open !== 'function') return 'none';
+    let got;
+    try { got = await CloudFolder.open(fresh); } catch (e) { got = { state: 'problem', problem: CloudFolder.problemOf(null) }; }
+    CLOUD_PROBLEM = got.state === 'problem' ? got.problem : null;
+    if (got.state === 'ready') { DIR = got.handle; localCopy(false); CloudFolder.hideProblem(); return 'ready'; }
+    if (got.state === 'problem') {
+      // the safety net: the same folder on this computer, when this browser may still open it.
+      // Offered with one button, never opened silently; once chosen it holds on every page of
+      // this browser session (said in a bar on each), and the kept folder stays on the account.
+      const local = await localTwin(got.problem);
+      if (local && localCopy() && await permission(local, false) === 'granted') {
+        DIR = local;
+        if (typeof document !== 'undefined') CloudFolder.showLocalNote(got.problem, async () => { localCopy(false); });
+        return 'ready';
+      }
+      if (typeof document !== 'undefined') {
+        CloudFolder.showProblem(got.problem, local ? { local: async () => {
+          if (await permission(local, true) !== 'granted') return false;
+          localCopy(true);
+          return true;
+        } } : null);
+      }
+      return 'cloud';
+    }
+    return 'none';
+  }
+  // "Open the copy on this computer for now", remembered for this browser session only
+  const COPY_KEY = 'aicsuite_local_copy';
+  function localCopy(on) {
+    try {
+      if (on === undefined) return sessionStorage.getItem(COPY_KEY) === '1';
+      if (on) sessionStorage.setItem(COPY_KEY, '1'); else sessionStorage.removeItem(COPY_KEY);
+    } catch (e) { /* storage blocked: asked on each page */ }
+    return !!on;
+  }
+  // The folder this browser remembers on this computer, when it is the same folder as the kept one
+  // (the same name, as a synced OneDrive or Google Drive folder has); null otherwise.
+  async function localTwin(problem) {
+    if (!nativeFolders() || !problem) return null;
+    const h = await idbGet();
+    if (!h) return null;
+    // the suite couldn't be asked which folder is kept: the one this browser remembers is all there is
+    if (problem.folder && String(h.name || '').toLowerCase() !== String(problem.folder).toLowerCase()) return null;
+    return h;
+  }
+  // A cloud folder that opened and then failed while it was being read: the same bar.
+  function cloudFailed(e) {
+    if (!inCloud() || !cloud() || typeof CloudFolder.problemOf !== 'function') return false;
+    DIR = null;
+    CloudFolder.current().then(async folder => {
+      CLOUD_PROBLEM = CloudFolder.problemOf(folder, e);
+      const local = await localTwin(CLOUD_PROBLEM);
+      CloudFolder.showProblem(CLOUD_PROBLEM, local ? { local: async () => {
+        if (await permission(local, true) !== 'granted') return false;
+        localCopy(true);
+        return true;
+      } } : null);
+    }, () => {});
+    return true;
+  }
+
   // On page load: the remembered folder, if this browser still lets us use it.
   // Returns 'ready', 'reconnect' (remembered, needs one click: the browser's
   // permission prompt must come from a user action), 'choose' (none
-  // remembered) or 'unsupported' (one-file mode).
+  // remembered), 'unsupported' (one-file mode) or 'cloud' (the account's
+  // folder is in OneDrive or Google Drive and can't be opened now; the bar on
+  // the page says why).
   async function restore() {
     if (DIR) return 'ready';
     // the folder in OneDrive or Google Drive kept on the account comes first
-    if (cloud()) {
-      const h = await CloudFolder.restore().catch(() => null);
-      if (h) { DIR = h; return 'ready'; }
-    }
+    const c = await cloudFirst(false);
+    if (c !== 'none') return c;
     if (!nativeFolders()) return 'unsupported';
     const h = await idbGet();
     if (!h) return 'choose';
@@ -363,10 +432,9 @@ const ClientFile = (function () {
   }
   // From a click: ask again for the remembered folder.
   async function reconnect() {
-    if (cloud()) {
-      const c = await CloudFolder.restore().catch(() => null);
-      if (c) { DIR = c; return 'ready'; }
-    }
+    if (DIR && DIR.cloud) DIR = null;      // asked for again, from the account
+    const c = await cloudFirst(true);
+    if (c !== 'none') return c;
     const h = await idbGet();
     if (!h) return 'choose';
     const p = await permission(h, true);
@@ -381,8 +449,8 @@ const ClientFile = (function () {
     if (!hasFolderAccess()) return 'unsupported';
     if (cloud()) {
       const h = await CloudFolder.choose(pickHere);
-      if (h) DIR = h;
-      return DIR ? 'ready' : 'choose';
+      if (h) { DIR = h; CLOUD_PROBLEM = null; if (typeof CloudFolder.hideProblem === 'function') CloudFolder.hideProblem(); }
+      return DIR ? 'ready' : CLOUD_PROBLEM ? 'cloud' : 'choose';
     }
     const h = await pickHere();
     if (h) DIR = h;
@@ -723,7 +791,7 @@ const ClientFile = (function () {
   return {
     FORMAT, VERSION, EXT, ARCHIVE_DIR, PRACTICE_FILE, ME_FILE, APPS, SECTION_APPS, STAGES, LIFECYCLE_FLAGS, LIFECYCLE_DATES,
     ClientFileError, newId, slugify, nameKey, blank, normalize, parse, serialize, merge, mergeFields, mergeSection, mergeCalendar, mergeMeetings, mergeTasks,
-    hasFolderAccess, restore, reconnect, pick, pickLocal, useFolder, folderName, inCloud, walk, folderNameFor, list, open, openPractice, openMe, saveMe, branding, create, save, archive,
+    hasFolderAccess, restore, reconnect, pick, pickLocal, useFolder, folderName, inCloud, cloudFailed, cloudProblem: () => CLOUD_PROBLEM, walk, folderNameFor, list, open, openPractice, openMe, saveMe, branding, create, save, archive,
     openOneFile, downloadOneFile,
   };
 })();
