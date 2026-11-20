@@ -43,7 +43,20 @@ const CloudFolder = (() => {
           privacy: 'Your files go between {name} and this browser only. The suite keeps which folder you chose, never what is in it.',
           browseH: 'Choose your clients folder in {name}', top: 'My files', use: 'Use this folder', cancel: 'Cancel', back: 'Back',
           loading: 'Loading...', empty: 'No folders here.', files: '{n} files here', failed: 'Could not open this folder. Try again.',
-          chosen: 'Clients folder: {path}', forget: 'Stop using this folder', inCloud: '{name}: {folder}' },
+          chosen: 'Clients folder: {path}', forget: 'Stop using this folder', inCloud: '{name}: {folder}',
+          whyNetwork: "This browser couldn't reach {name}: the internet connection dropped, or something on this network or a browser extension blocked it. Check your connection, then click Try again.",
+          whyNotConnected: "{name} isn't connected to the suite any more. Click Reconnect {name}, then choose the folder.",
+          whyReconnect: "{name} asked for a new sign-in (a changed password or removed access). Click Reconnect {name}, then choose the folder.",
+          whyNoFiles: "The connection to {name} doesn't allow files yet. Click Reconnect {name} and allow files.",
+          whyNoDrive: "The connected Microsoft account has no OneDrive. Some Microsoft 365 plans, such as email-only plans, don't include it; personal Microsoft accounts do. Click Reconnect OneDrive and pick an account that has OneDrive, or use a folder on this computer.",
+          whyDenied: "{name} refused access. The folder may belong to another account, or your organization doesn't let apps open files. Reconnect with the account that owns the folder, or ask your IT administrator.",
+          whyGone: "This folder is no longer in {name}: it was moved, renamed or deleted. Click Back and choose another folder.",
+          whyBusy: "{name} is busy or not answering right now. Wait a minute, then click Try again.",
+          whyOther: "{name} answered with an error the suite doesn't recognise. Click Try again. If it keeps happening, send AI Curator support the reference shown here.",
+          whySave: "The suite couldn't keep this folder as your clients folder. Click Use this folder again. If it keeps happening, send AI Curator support the reference shown here.",
+          ref: "Reference: {ref}",
+          retry: "Try again",
+          reconnect: "Reconnect {name}" },
     es: { where: '¿Dónde está su carpeta de clientes?', whereP: 'Elíjala una vez. La suite y las tres aplicaciones la abrirán solas al iniciar sesión, en cualquier navegador.',
           od: 'Elegir carpeta en OneDrive', gd: 'Elegir carpeta en Google Drive', local: 'Usar una carpeta de este equipo',
           localP: 'Solo en este navegador de este equipo, y puede volver a pedirla al cerrarlo.',
@@ -51,7 +64,20 @@ const CloudFolder = (() => {
           privacy: 'Sus archivos van solo entre {name} y este navegador. La suite guarda qué carpeta eligió, nunca su contenido.',
           browseH: 'Elija su carpeta de clientes en {name}', top: 'Mis archivos', use: 'Usar esta carpeta', cancel: 'Cancelar', back: 'Atrás',
           loading: 'Cargando...', empty: 'No hay carpetas aquí.', files: '{n} archivos aquí', failed: 'No se pudo abrir esta carpeta. Inténtelo de nuevo.',
-          chosen: 'Carpeta de clientes: {path}', forget: 'Dejar de usar esta carpeta', inCloud: '{name}: {folder}' },
+          chosen: 'Carpeta de clientes: {path}', forget: 'Dejar de usar esta carpeta', inCloud: '{name}: {folder}',
+          whyNetwork: "Este navegador no pudo comunicarse con {name}: se cortó la conexión a internet, o algo en esta red o una extensión del navegador lo bloqueó. Revise su conexión y haga clic en Intentar de nuevo.",
+          whyNotConnected: "{name} ya no está conectado a la suite. Haga clic en Volver a conectar {name} y luego elija la carpeta.",
+          whyReconnect: "{name} pidió un nuevo inicio de sesión (una contraseña cambiada o un acceso retirado). Haga clic en Volver a conectar {name} y luego elija la carpeta.",
+          whyNoFiles: "La conexión con {name} aún no permite archivos. Haga clic en Volver a conectar {name} y permita los archivos.",
+          whyNoDrive: "La cuenta Microsoft conectada no tiene OneDrive. Algunos planes de Microsoft 365, como los de solo correo, no lo incluyen; las cuentas Microsoft personales sí. Haga clic en Volver a conectar OneDrive y elija una cuenta con OneDrive, o use una carpeta de este equipo.",
+          whyDenied: "{name} denegó el acceso. Puede que la carpeta pertenezca a otra cuenta, o que su organización no permita que las aplicaciones abran archivos. Vuelva a conectarlo con la cuenta propietaria de la carpeta, o consulte a su administrador de TI.",
+          whyGone: "Esta carpeta ya no está en {name}: se movió, se cambió de nombre o se eliminó. Haga clic en Atrás y elija otra carpeta.",
+          whyBusy: "{name} está ocupado o no responde en este momento. Espere un minuto y haga clic en Intentar de nuevo.",
+          whyOther: "{name} respondió con un error que la suite no reconoce. Haga clic en Intentar de nuevo. Si sigue ocurriendo, envíe al soporte de AI Curator la referencia que se muestra aquí.",
+          whySave: "La suite no pudo guardar esta carpeta como su carpeta de clientes. Vuelva a hacer clic en Usar esta carpeta. Si sigue ocurriendo, envíe al soporte de AI Curator la referencia que se muestra aquí.",
+          ref: "Referencia: {ref}",
+          retry: "Intentar de nuevo",
+          reconnect: "Volver a conectar {name}" },
     fr: { where: 'Où est votre dossier clients ?', whereP: 'Choisissez-le une fois. La suite et les trois applications l\'ouvriront seules à la connexion, dans n\'importe quel navigateur.',
           od: 'Choisir un dossier dans OneDrive', gd: 'Choisir un dossier dans Google Drive', local: 'Utiliser un dossier de cet ordinateur',
           localP: 'Seulement dans ce navigateur sur cet ordinateur, et il peut le redemander après la fermeture.',
@@ -59,7 +85,20 @@ const CloudFolder = (() => {
           privacy: 'Vos fichiers circulent uniquement entre {name} et ce navigateur. La suite garde le dossier choisi, jamais son contenu.',
           browseH: 'Choisissez votre dossier clients dans {name}', top: 'Mes fichiers', use: 'Utiliser ce dossier', cancel: 'Annuler', back: 'Retour',
           loading: 'Chargement...', empty: 'Aucun dossier ici.', files: '{n} fichiers ici', failed: 'Impossible d\'ouvrir ce dossier. Réessayez.',
-          chosen: 'Dossier clients : {path}', forget: 'Ne plus utiliser ce dossier', inCloud: '{name} : {folder}' },
+          chosen: 'Dossier clients : {path}', forget: 'Ne plus utiliser ce dossier', inCloud: '{name} : {folder}',
+          whyNetwork: "Ce navigateur n'a pas pu joindre {name} : la connexion internet a été coupée, ou quelque chose sur ce réseau ou une extension du navigateur l'a bloqué. Vérifiez votre connexion, puis cliquez sur Réessayer.",
+          whyNotConnected: "{name} n'est plus connecté à la suite. Cliquez sur Reconnecter {name}, puis choisissez le dossier.",
+          whyReconnect: "{name} demande une nouvelle connexion (mot de passe changé ou accès retiré). Cliquez sur Reconnecter {name}, puis choisissez le dossier.",
+          whyNoFiles: "La connexion à {name} n'autorise pas encore les fichiers. Cliquez sur Reconnecter {name} et autorisez les fichiers.",
+          whyNoDrive: "Le compte Microsoft connecté n'a pas de OneDrive. Certains forfaits Microsoft 365, comme les forfaits messagerie seule, ne l'incluent pas ; les comptes Microsoft personnels si. Cliquez sur Reconnecter OneDrive et choisissez un compte qui a OneDrive, ou utilisez un dossier de cet ordinateur.",
+          whyDenied: "{name} a refusé l'accès. Le dossier appartient peut-être à un autre compte, ou votre organisation n'autorise pas les applications à ouvrir des fichiers. Reconnectez-vous avec le compte propriétaire du dossier, ou demandez à votre administrateur informatique.",
+          whyGone: "Ce dossier n'est plus dans {name} : il a été déplacé, renommé ou supprimé. Cliquez sur Retour et choisissez un autre dossier.",
+          whyBusy: "{name} est occupé ou ne répond pas pour le moment. Attendez une minute, puis cliquez sur Réessayer.",
+          whyOther: "{name} a répondu par une erreur que la suite ne reconnaît pas. Cliquez sur Réessayer. Si cela continue, envoyez au support AI Curator la référence affichée ici.",
+          whySave: "La suite n'a pas pu garder ce dossier comme dossier clients. Cliquez à nouveau sur Utiliser ce dossier. Si cela continue, envoyez au support AI Curator la référence affichée ici.",
+          ref: "Référence : {ref}",
+          retry: "Réessayer",
+          reconnect: "Reconnecter {name}" },
     pt: { where: 'Onde está sua pasta de clientes?', whereP: 'Escolha uma vez. A suíte e os três aplicativos a abrem sozinhos quando você entra, em qualquer navegador.',
           od: 'Escolher pasta no OneDrive', gd: 'Escolher pasta no Google Drive', local: 'Usar uma pasta deste computador',
           localP: 'Só neste navegador deste computador, e ele pode pedir de novo depois que você fechar.',
@@ -67,7 +106,20 @@ const CloudFolder = (() => {
           privacy: 'Seus arquivos vão apenas entre o {name} e este navegador. A suíte guarda qual pasta você escolheu, nunca o conteúdo.',
           browseH: 'Escolha sua pasta de clientes no {name}', top: 'Meus arquivos', use: 'Usar esta pasta', cancel: 'Cancelar', back: 'Voltar',
           loading: 'Carregando...', empty: 'Nenhuma pasta aqui.', files: '{n} arquivos aqui', failed: 'Não foi possível abrir esta pasta. Tente de novo.',
-          chosen: 'Pasta de clientes: {path}', forget: 'Parar de usar esta pasta', inCloud: '{name}: {folder}' },
+          chosen: 'Pasta de clientes: {path}', forget: 'Parar de usar esta pasta', inCloud: '{name}: {folder}',
+          whyNetwork: "Este navegador não conseguiu falar com o {name}: a conexão com a internet caiu, ou algo nesta rede ou uma extensão do navegador bloqueou. Verifique sua conexão e clique em Tentar de novo.",
+          whyNotConnected: "O {name} não está mais conectado à suíte. Clique em Reconectar {name} e depois escolha a pasta.",
+          whyReconnect: "O {name} pediu um novo login (senha alterada ou acesso removido). Clique em Reconectar {name} e depois escolha a pasta.",
+          whyNoFiles: "A conexão com o {name} ainda não permite arquivos. Clique em Reconectar {name} e permita os arquivos.",
+          whyNoDrive: "A conta Microsoft conectada não tem OneDrive. Alguns planos do Microsoft 365, como os só de email, não incluem; as contas Microsoft pessoais incluem. Clique em Reconectar OneDrive e escolha uma conta que tenha OneDrive, ou use uma pasta deste computador.",
+          whyDenied: "O {name} recusou o acesso. A pasta pode pertencer a outra conta, ou sua organização não permite que aplicativos abram arquivos. Reconecte com a conta dona da pasta, ou fale com o administrador de TI.",
+          whyGone: "Esta pasta não está mais no {name}: foi movida, renomeada ou excluída. Clique em Voltar e escolha outra pasta.",
+          whyBusy: "O {name} está ocupado ou não responde agora. Espere um minuto e clique em Tentar de novo.",
+          whyOther: "O {name} respondeu com um erro que a suíte não reconhece. Clique em Tentar de novo. Se continuar acontecendo, envie ao suporte da AI Curator a referência mostrada aqui.",
+          whySave: "A suíte não conseguiu guardar esta pasta como sua pasta de clientes. Clique em Usar esta pasta de novo. Se continuar acontecendo, envie ao suporte da AI Curator a referência mostrada aqui.",
+          ref: "Referência: {ref}",
+          retry: "Tentar de novo",
+          reconnect: "Reconectar {name}" },
   };
   function say(key, vars) {
     const l = String((typeof document !== 'undefined' && document.documentElement.lang) || 'en').slice(0, 2);
@@ -97,21 +149,64 @@ const CloudFolder = (() => {
     const kept = tokens[provider];
     if (kept && kept.until > Date.now()) return kept.access;
     let got;
-    try { got = await suite('/integrations/' + SOURCE[provider] + '/token'); } catch (e) { throw new CloudError('not_connected', e.message); }
+    // the suite's own reason rides along (microsoft_reconnect, onedrive_not_connected, microsoft_unavailable)
+    try { got = await suite('/integrations/' + SOURCE[provider] + '/token'); } catch (e) { throw Object.assign(new CloudError('not_connected', e.message), { detail: e.code }); }
     if (!got || !got.access_token) throw new CloudError('not_connected', 'no token');
     if (Array.isArray(got.scopes) && !got.scopes.some(s => s === SCOPE[provider] || s.endsWith('/' + SCOPE[provider]))) throw new CloudError('no_files', 'files not allowed');
     const until = got.expires_at ? Date.parse(got.expires_at) - 60000 : Date.now() + 5 * 60000;
     tokens[provider] = { access: got.access_token, until };
     return got.access_token;
   }
+  // Microsoft's or Google's own words for a refusal: { code, hint } (the code is
+  // shown as the reference; the message is only looked at, never shown or kept)
+  async function refusalOf(r) {
+    try {
+      const b = await r.clone().json(), e = (b && b.error) || {};
+      const inner = (e.innerError && e.innerError.code) || (Array.isArray(e.errors) && e.errors[0] && e.errors[0].reason) || '';
+      const code = String(typeof e === 'string' ? e : (e.code || e.status || '')).replace(/[^A-Za-z0-9_.:-]/g, '').slice(0, 60);
+      return { graph: [code, String(inner).replace(/[^A-Za-z0-9_.:-]/g, '').slice(0, 60)].filter(Boolean).join(' '), hint: String(e.message || '') };
+    } catch (x) { return { graph: '', hint: '' }; }
+  }
   // A call to Graph or Drive with the token; one retry with a fresh token.
   async function call(provider, url, opts, again) {
     const access = await token(provider);
-    const r = await fetch(url, Object.assign({}, opts, { headers: Object.assign({ Authorization: 'Bearer ' + access }, (opts && opts.headers) || {}) }));
+    let r;
+    try {
+      r = await fetch(url, Object.assign({}, opts, { headers: Object.assign({ Authorization: 'Bearer ' + access }, (opts && opts.headers) || {}) }));
+    } catch (e) { throw new CloudError('network', e.message); }      // offline, blocked by the network or an extension
     if (r.status === 401 && !again) { delete tokens[provider]; return call(provider, url, opts, true); }
-    if (r.status === 404) throw notFound(url);
-    if (!r.ok) throw new CloudError('http_' + r.status, url.split('?')[0] + ' ' + r.status);
+    if (r.status === 404) throw Object.assign(notFound(url), { status: 404 }, await refusalOf(r));
+    if (!r.ok) throw Object.assign(new CloudError('http_' + r.status, url.split('?')[0] + ' ' + r.status), { status: r.status }, await refusalOf(r));
     return r;
+  }
+
+  // Why a folder could not be opened, in plain words, with what to do next and
+  // the provider's own reference. top: the very top of the drive (a 404 there
+  // means the account has no OneDrive at all).
+  function why(provider, e, top) {
+    const code = String((e && e.code) || ''), st = (e && e.status) || 0, hint = String((e && e.hint) || '').toLowerCase();
+    const ref = [st ? 'HTTP ' + st : '', e && e.graph ? e.graph : '', e && e.detail ? e.detail : ''].filter(Boolean).join(' ')
+      || (code && code !== 'network' ? code : '');
+    let key = 'whyOther', fix = '';
+    if (code === 'network') key = 'whyNetwork';
+    else if (code === 'no_files') { key = 'whyNoFiles'; fix = 'reconnect'; }
+    else if (code === 'not_connected') {
+      key = e.detail === 'microsoft_unavailable' ? 'whyBusy' : e.detail === 'microsoft_reconnect' ? 'whyReconnect' : 'whyNotConnected';
+      fix = key === 'whyBusy' ? '' : 'reconnect';
+    } else if (provider === 'onedrive' && (/spo license|mysite|not provisioned|onedrive.*(not|isn).*(set up|available)/.test(hint) || (top && st === 404))) {
+      key = 'whyNoDrive'; fix = 'reconnect';
+    } else if (st === 401) { key = 'whyReconnect'; fix = 'reconnect'; }
+    else if (st === 403) { key = 'whyDenied'; fix = 'reconnect'; }
+    else if (st === 404) key = 'whyGone';
+    else if (st === 429 || st >= 500) key = 'whyBusy';
+    return { key, ref, fix, text: say(key, { name: NAMES[provider] }) };
+  }
+  // The same cause in the Microsoft sync log on Integrations: kind and codes only, never a name
+  function logWhy(provider, where, w) {
+    if (provider !== 'onedrive') return;
+    const detail = (where + ' ' + w.key + ' ' + w.ref).replace(/[^A-Za-z0-9 .,:_-]/g, '').slice(0, 200);
+    try { fetch(SUITE + '/api/integrations/microsoft/log', { method: 'POST', credentials: 'include', body: JSON.stringify({ kind: 'files', detail }) }).catch(() => {}); } catch (x) { /* best effort */ }
+    if (typeof console !== 'undefined') console.warn('[clients folder]', where, w.key, w.ref);
   }
   const json = async (provider, url, opts) => (await call(provider, url, opts)).json();
 
@@ -415,13 +510,27 @@ const CloudFolder = (() => {
           crumbs.append(b);
         });
       }
+      // what failed, what to do, the reference, and one button (Try again, or Reconnect)
+      function failed(e, top, again) {
+        const w = why(provider, e, top);
+        logWhy(provider, top ? 'top' : 'list', w);
+        const li = el('li', 'aiccs-cf-msg aiccs-cf-why');
+        li.setAttribute('role', 'alert');
+        li.append(el('span', null, w.text));
+        if (w.ref) li.append(el('small', null, say('ref', { ref: w.ref })));
+        let b;
+        if (w.fix === 'reconnect') { b = el('a', 'aiccs-cf-btn primary', say('reconnect', { name: NAMES[provider] })); b.href = connectUrl(provider); }
+        else if (w.key !== 'whyGone') { b = el('button', 'aiccs-cf-btn', say('retry')); b.type = 'button'; b.onclick = again; }
+        if (b) li.append(b);
+        list.replaceChildren(li);
+      }
       async function open() {
         drawCrumbs();
         use.disabled = trail.length < 2;    // not the very top of the drive
         list.replaceChildren(el('li', 'aiccs-cf-msg', say('loading')));
         note.textContent = '';
         let items;
-        try { items = await API[provider].list(trail[trail.length - 1].node); } catch (e) { list.replaceChildren(el('li', 'aiccs-cf-msg', say('failed'))); return; }
+        try { items = await API[provider].list(trail[trail.length - 1].node); } catch (e) { failed(e, false, open); return; }
         const dirs = items.filter(n => n.dir).sort((a, b) => a.name.localeCompare(b.name));
         const files = items.length - dirs.length;
         note.textContent = files ? say('files', { n: files }) : '';
@@ -449,13 +558,19 @@ const CloudFolder = (() => {
         const here = trail[trail.length - 1];
         const folder = { provider, item_id: here.node.id, drive_id: here.node.driveId || '', path: trail.slice(1).map(s => s.name) };
         use.disabled = true;
-        try { saved = (await suite('/cloud-folder', folder)).folder; } catch (e) { use.disabled = false; note.textContent = say('failed'); return; }
+        try { saved = (await suite('/cloud-folder', folder)).folder; } catch (e) {
+          use.disabled = false;
+          note.textContent = say('whySave') + ' ' + say('ref', { ref: (e && e.code) || 'unknown' });
+          return;
+        }
         done(handleFor(saved));
       };
-      (async () => {
+      const begin = async () => {
+        list.replaceChildren(el('li', 'aiccs-cf-msg', say('loading')));
         try { const top = await API[provider].top(); trail.push({ node: top, name: say('top') }); open(); }
-        catch (e) { list.replaceChildren(el('li', 'aiccs-cf-msg', say('failed'))); }
-      })();
+        catch (e) { failed(e, true, begin); }
+      };
+      begin();
     });
   }
 
@@ -476,6 +591,6 @@ const CloudFolder = (() => {
     } catch (e) { return ''; }
   }
 
-  return { restore, choose, browse, start, forget, current, returning, names: NAMES, label, say, CloudError, _api: API, _handleFor: handleFor };
+  return { restore, choose, browse, start, forget, current, returning, names: NAMES, label, say, CloudError, _api: API, _handleFor: handleFor, _why: why };
 })();
 if (typeof module !== 'undefined') module.exports = CloudFolder;
