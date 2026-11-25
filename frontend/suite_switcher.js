@@ -5,12 +5,12 @@
    and markup; the page only says where it goes:
 
      <script src="suite_switcher.js" data-app="clientbriefai"
-             data-before="#accountMenu" data-icon="assets/aicurator-spark.png"
+             data-before="#accountMenu" data-icon="assets/aicurator-mark.png"
              data-lang-key="clientbriefai_ui_lang"></script>
 
    data-app       which app this is (it is left out of the menu)
    data-before    the header element the button is placed in front of
-   data-icon      the AI Curator sparkle
+   data-icon      the AI Curator mark (the ribbon A)
    data-lang-key  where the app keeps its language in localStorage; leave
                   it out for an app with one language, and the browser's
                   language is used
@@ -27,7 +27,7 @@
   if(!tag) return;
   const HERE = tag.dataset.app || '';
   const BEFORE = tag.dataset.before || '';
-  const ICON = tag.dataset.icon || 'assets/aicurator-spark.png';
+  const ICON = tag.dataset.icon || 'assets/aicurator-mark.png';
   const LANG_KEY = tag.dataset.langKey || '';
 
   const SUITE = 'https://aicsuite.ai-curator.ai/index.html';
