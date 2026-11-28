@@ -17,6 +17,12 @@ Run:  python tests/test_client_file.py
    client goes into _practice.client.json; with no folder yet the debrief
    offers to choose it and then writes; a browser with no folder access
    says so.
+4. A prospect (the suite's LeadGen Hub, ?prospect=<id>): the picker lists
+   the prospect files after the clients, the one from the suite preselected
+   as "(prospect)"; its session goes into its prospect file under
+   Prospects/ (other sections kept), never a client file; a prospect made a
+   client meanwhile is written to its client file; with no prospects the
+   picker is as before (no groups).
 
 Plain asserts, no test framework. The AI calls are stand-ins; nothing
 leaves this machine."""
@@ -102,6 +108,7 @@ i_cf, i_cp, i_mod = html.find('src="clientfile.js'), html.find('src="client_prac
 check("clientfile.js, then client_practice.js, before the module", -1 < i_cf < i_cp < i_mod)
 end_fn = html[html.find("window.endSession = async function"):html.find("window.restartSession")]
 check("endSession hands the debrief to CcaiClientFile.record", "CcaiClientFile.record(res" in end_fn)
+check("the note under the Client picker reads in near-white (--text)", ".ccai-client-note{margin-top:6px; font-size:12px; line-height:1.5; color:var(--text);}" in html)
 
 # ---- 3. browser ----------------------------------------------------------------
 try:
@@ -221,6 +228,113 @@ with sync_playwright() as p:
     check("no folder access: the picker says so", "cannot open your clients folder" in pg.inner_text("#ccaiClientNote") and pg.is_hidden("#ccaiFolderBtn"))
     pg.evaluate("(r) => CcaiClientFile.record(r, {})", END); pg.wait_for_timeout(300)
     check("...and the debrief says it stays in Debrief History", "Debrief History only" in pg.inner_text("#ccaiFileNote"))
+    check("no page errors", errs == [], errs)
+    ctx.close()
+
+    print("\n=== 4. A prospect ===")
+    # a folder with subfolders: files keyed by their path ("Prospects/Sunrise Bakery/sunrise-bakery.prospect.json")
+    NESTED = """(files) => {
+      class FFile {
+        constructor(name, text) { this.kind = 'file'; this.name = name; this.text = text || ''; }
+        async getFile() { return new File([this.text], this.name, { type: 'application/json' }); }
+        async createWritable() { let b = ''; return { write: async s => { b += s; }, close: async () => { this.text = b; } }; }
+      }
+      class FDir {
+        constructor(name) { this.kind = 'directory'; this.name = name; this.entries = new Map(); }
+        async *values() { for (const e of this.entries.values()) yield e; }
+        async getFileHandle(n, o) { const e = this.entries.get(n); if (e && e.kind === 'file') return e;
+          if (!o || !o.create) { const er = new Error('nf'); er.name = 'NotFoundError'; throw er; }
+          const f = new FFile(n); this.entries.set(n, f); return f; }
+        async getDirectoryHandle(n, o) { const e = this.entries.get(n); if (e && e.kind === 'directory') return e;
+          if (!o || !o.create) { const er = new Error('nf'); er.name = 'NotFoundError'; throw er; }
+          const d = new FDir(n); this.entries.set(n, d); return d; }
+        async removeEntry(n) { this.entries.delete(n); }
+        async queryPermission() { return 'granted'; }
+        async requestPermission() { return 'granted'; }
+      }
+      const root = new FDir('Clients');
+      for (const [path, v] of Object.entries(files)) {
+        const parts = path.split('/'); let d = root;
+        for (const p of parts.slice(0, -1)) { if (!d.entries.has(p)) d.entries.set(p, new FDir(p)); d = d.entries.get(p); }
+        const last = parts[parts.length - 1]; d.entries.set(last, new FFile(last, JSON.stringify(v, null, 2)));
+      }
+      window.__dir = root; window.__asks = 0;
+      window.showDirectoryPicker = async () => { window.__asks++; return root; };
+    }"""
+    AT = """(path) => { let d = window.__dir; const parts = path.split('/');
+      for (const p of parts.slice(0, -1)) { d = d.entries.get(p); if (!d) return null; }
+      const f = d.entries.get(parts[parts.length - 1]); return f ? JSON.parse(f.text) : null; }"""
+    PID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+    PPATH = "Prospects/Sunrise Bakery/sunrise-bakery.prospect.json"
+    SUNRISE = {"format": "aicsuite.client", "version": 1, "id": PID, "updatedAt": "2026-11-25T10:00:00.000Z", "updatedBy": "cbai",
+               "client": {"name": "Sunrise Bakery", "industry": "restaurant"}, "prospect": {"id": "p-1", "placeId": "g-1", "since": "2026-11-20T10:00:00.000Z"},
+               "cbai": {"seoAudit": {"score": 61}}, "stage": "diagnose", "lifecycle": {}}
+    NORTH = {"format": "aicsuite.client", "version": 1, "id": "bbbbbbbb-bbbb-4ccc-8ddd-eeeeeeeeeeee", "updatedAt": "2026-11-24T10:00:00.000Z", "updatedBy": "cbai",
+             "client": {"name": "Northside Dental"}, "prospect": {"id": "p-2"}, "stage": "diagnose", "lifecycle": {}}
+    WITH_P = {"harbor-and-vine-kitchen.client.json": HARBOR, "bluebird-dental.client.json": BLUE, PPATH: SUNRISE,
+              "Prospects/Northside Dental/northside-dental.prospect.json": NORTH}
+
+    def npage(b, files, query=""):
+        p_ = tmp / ("p%d.html" % len(list(tmp.iterdir())))
+        p_.write_text(PAGE, encoding="utf-8")
+        ctx = b.new_context(); pg = ctx.new_page(); errs = []
+        pg.on("pageerror", lambda e: errs.append(str(e)))
+        pg.add_init_script("(() => { const files = " + json.dumps(files) + "; (" + NESTED + ")(files); })()")
+        pg.goto(p_.as_uri() + query)
+        pg.add_script_tag(path=str(ROOT / "frontend" / "clientfile.js"))
+        pg.add_script_tag(path=str(ROOT / "frontend" / "client_practice.js"))
+        pg.wait_for_timeout(300)
+        return ctx, pg, errs
+
+    GROUPS = """() => [...document.querySelectorAll('#ccaiClientSelect > *')].map(n => n.tagName === 'OPTGROUP'
+      ? { group: n.label, options: [...n.children].map(o => o.textContent) } : n.textContent)"""
+    ctx, pg, errs = npage(b, WITH_P, "?prospect=" + PID + "&invite=x")
+    check("?prospect= is taken out of the address (other parameters stay)", "prospect=" not in pg.url and "invite=x" in pg.url, pg.url)
+    pg.click("#ccaiFolderBtn"); pg.wait_for_timeout(500)
+    g = pg.evaluate(GROUPS)
+    check("the picker lists Clients, then Prospects (newest first)", g == ["No client: practice only",
+          {"group": "Clients", "options": ["Bluebird Dental", "Harbor & Vine Kitchen"]},
+          {"group": "Prospects", "options": ["Sunrise Bakery (prospect)", "Northside Dental"]}], g)
+    check("the prospect from the suite is preselected, the note says its file",
+          pg.input_value("#ccaiClientSelect") == "prospect:" + PID and "this prospect’s file" in pg.inner_text("#ccaiClientNote")
+          and "becomes a client" in pg.inner_text("#ccaiClientNote"), pg.inner_text("#ccaiClientNote"))
+    pg.evaluate("(r) => CcaiClientFile.record(r, {})", END); pg.wait_for_timeout(600)
+    d = pg.evaluate(AT, PPATH)
+    sess = (d.get("ccai") or {}).get("sessions", [])
+    check("the session goes into the prospect file as ccai.sessions", [x["id"] for x in sess] == ["s-1"] and sess[0]["scores"] == {"pressure": 40, "trust": 65, "specificity": 70}, d.get("ccai"))
+    check("its other work, the prospect block and the stage are kept; lastPracticeSession set",
+          d["cbai"]["seoAudit"]["score"] == 61 and d["prospect"]["id"] == "p-1" and d["stage"] == "diagnose"
+          and d["lifecycle"].get("lastPracticeSession") == "2026-10-22T15:04:05.123Z" and d["updatedBy"] == "ccai", d)
+    check("no client file and no practice file is touched", pg.evaluate(AT, "harbor-and-vine-kitchen.client.json").get("ccai") is None
+          and pg.evaluate(AT, "_practice.client.json") is None)
+    check("the debrief says where it went", "Saved to Sunrise Bakery’s prospect file." in pg.inner_text("#ccaiFileNote"), pg.inner_text("#ccaiFileNote"))
+    pg.select_option("#ccaiClientSelect", HV_ID); pg.wait_for_timeout(200)
+    check("picking a client again: the (prospect) mark leaves the prospect's option",
+          pg.evaluate(GROUPS)[2]["options"] == ["Sunrise Bakery", "Northside Dental"] and "this client’s file" in pg.inner_text("#ccaiClientNote"))
+    check("no page errors", errs == [], errs)
+    ctx.close()
+
+    # made a client meanwhile (the suite's convertProspect: same id, the prospect file gone)
+    ctx, pg, errs = npage(b, WITH_P, "?prospect=" + PID)
+    pg.click("#ccaiFolderBtn"); pg.wait_for_timeout(500)
+    conv = dict(SUNRISE, prospect=dict(SUNRISE["prospect"], convertedAt="2026-11-28T09:00:00.000Z"))
+    pg.evaluate("""([path, doc]) => { const d = window.__dir; d.entries.get('Prospects').entries.delete('Sunrise Bakery');
+      const f = { kind: 'file', name: 'sunrise-bakery.client.json', text: JSON.stringify(doc),
+        async getFile() { return new File([this.text], this.name); },
+        async createWritable() { let b = ''; const me = this; return { write: async s => { b += s; }, close: async () => { me.text = b; } }; } };
+      d.entries.set(f.name, f); }""", [PPATH, conv])
+    pg.evaluate("(r) => CcaiClientFile.record(r, {})", dict(END, session_id="s-7")); pg.wait_for_timeout(800)
+    d = pg.evaluate(AT, "sunrise-bakery.client.json")
+    check("a prospect made a client meanwhile: the session goes into its client file",
+          [x["id"] for x in (d.get("ccai") or {}).get("sessions", [])] == ["s-7"], d.get("ccai"))
+    check("...and the debrief says the client file", "Saved to Sunrise Bakery’s client file." in pg.inner_text("#ccaiFileNote"), pg.inner_text("#ccaiFileNote"))
+    check("no page errors", errs == [], errs)
+    ctx.close()
+
+    # no prospects: as before, no groups
+    ctx, pg, errs = npage(b, {"harbor-and-vine-kitchen.client.json": HARBOR})
+    pg.click("#ccaiFolderBtn"); pg.wait_for_timeout(400)
+    check("no prospect files: the picker is as before, no groups", pg.evaluate(GROUPS) == ["No client: practice only", "Harbor & Vine Kitchen"], pg.evaluate(GROUPS))
     check("no page errors", errs == [], errs)
     ctx.close()
     b.close()

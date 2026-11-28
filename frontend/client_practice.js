@@ -14,13 +14,21 @@
    module, copied unchanged.
 
    The client comes preselected when the suite opens this app for a client
-   (?client=<id>, kept for the tab so it survives signing in). Plain
+   (?client=<id>, kept for the tab so it survives signing in). A prospect
+   too (the suite's LeadGen Hub, ?prospect=<id>): the picker lists the
+   prospect files under Prospects/ after the clients, and a session for one
+   goes into its prospect file the same way, so it stays with it when it
+   becomes a client (the suite's convertProspect keeps the file whole). A
+   prospect made a client meanwhile is written to its client file. Plain
    script, loaded before the page's module; the module calls
    CcaiClientFile.record() once a debrief is shown.
    ===================================================================== */
 (function(){
   const PICK_KEY = 'consultcastai_client';   // sessionStorage: the client chosen in this tab
-  const S = { folder: 'none', clients: [], pending: null };
+  const S = { folder: 'none', clients: [], prospects: [], pending: null };
+  // the picked value: a client file's id, or PROSPECT + a prospect file's id
+  const PROSPECT = 'prospect:';
+  const isProspectPick = v => String(v || '').startsWith(PROSPECT);
 
   const $ = id => document.getElementById(id);
   const arr = v => (Array.isArray(v) ? v : []);
@@ -33,13 +41,13 @@
   function chosen(){ try{ return sessionStorage.getItem(PICK_KEY) || ''; }catch(_){ return ''; } }
   function choose(id){ try{ if(id) sessionStorage.setItem(PICK_KEY, id); else sessionStorage.removeItem(PICK_KEY); }catch(_){} }
 
-  // ?client=<id>&step=... from the suite: remembered for this tab, then
-  // taken out of the address bar
+  // ?client=<id>&step=... (or ?prospect=<id>) from the suite: remembered for
+  // this tab, then taken out of the address bar
   (function fromAddress(){
     const q = new URLSearchParams(location.search);
-    if(!q.get('client')) return;
-    choose(q.get('client'));
-    q.delete('client'); q.delete('step');
+    if(!q.get('client') && !q.get('prospect')) return;
+    choose(q.get('client') || PROSPECT + q.get('prospect'));
+    q.delete('client'); q.delete('prospect'); q.delete('step');
     try{ history.replaceState(null, '', location.pathname + (q.toString() ? '?' + q : '') + location.hash); }catch(_){}
   })();
 
@@ -50,30 +58,44 @@
     const want = chosen();
     sel.replaceChildren(el('option', null, 'No client: practice only'));
     sel.firstChild.value = '';
-    S.clients.forEach(c => {
-      const o = el('option', null, c.doc.client.name || c.fileName);
-      o.value = c.doc.id;
-      sel.append(o);
-    });
-    if(want && !S.clients.some(c => c.doc.id === want) && S.folder === 'ready'){
+    const opt = (text, value) => { const o = el('option', null, text); o.value = value; return o; };
+    const clients = S.clients.map(c => opt(c.doc.client.name || c.fileName, c.doc.id));
+    if(S.prospects.length){
+      const cg = el('optgroup'); cg.label = 'Clients'; cg.append(...clients);
+      const pg = el('optgroup'); pg.label = 'Prospects';
+      pg.append(...S.prospects.map(p => opt(p.doc.client.name || p.fileName, PROSPECT + p.doc.id)));
+      if(clients.length) sel.append(cg);
+      sel.append(pg);
+    }else{
+      sel.append(...clients);
+    }
+    const known = v => [...sel.options].some(o => o.value && o.value === v);
+    if(want && !known(want) && S.folder === 'ready'){
       choose('');
     }
-    sel.value = S.clients.some(c => c.doc.id === want) ? want : '';
+    sel.value = known(want) ? want : '';
+    // the closed select shows a prospect as one (the options are made anew on each render)
+    const picked = sel.selectedOptions[0];
+    if(picked && isProspectPick(picked.value)) picked.textContent += ' (prospect)';
     sel.disabled = S.folder !== 'ready';
     btn.hidden = S.folder === 'unsupported';
     btn.textContent = S.folder === 'ready' ? 'Change folder' : S.folder === 'reconnect' ? 'Reconnect folder' : 'Choose clients folder';
     note.textContent = S.folder === 'ready'
-      ? (sel.value ? 'The debrief and scores go into this client’s file.' : 'The debrief and scores go into your practice file.')
+      ? (isProspectPick(sel.value) ? 'The debrief and scores go into this prospect’s file, and stay with it when it becomes a client.'
+        : sel.value ? 'The debrief and scores go into this client’s file.' : 'The debrief and scores go into your practice file.')
       : S.folder === 'reconnect' ? 'Reconnect your clients folder to keep debriefs in your client files.'
       : S.folder === 'unsupported' ? 'This browser cannot open your clients folder. Use Chrome or Edge to keep debriefs in your client files.'
       : 'Choose the folder where you keep your client files to keep each debrief with its client.';
   }
   async function load(){
     S.folder = ClientFile.hasFolderAccess() ? await ClientFile.restore().catch(() => 'choose') : 'unsupported';
-    S.clients = [];
+    S.clients = []; S.prospects = [];
     if(S.folder === 'ready'){
       try{ S.clients = (await ClientFile.list()).clients; }
       catch(_){ S.folder = 'reconnect'; }
+      if(S.folder === 'ready'){
+        try{ S.prospects = (await ClientFile.listProspects()).prospects; }catch(_){ S.prospects = []; }
+      }
     }
     render();
   }
@@ -138,21 +160,31 @@
     n.hidden = false;
   }
   async function write(rec){
-    const id = rec.clientId;
-    const entry = id ? await ClientFile.open(id) : await ClientFile.openPractice('ccai');
+    const id = rec.clientId, prospect = isProspectPick(id);
+    const entry = prospect ? await ClientFile.openProspect(id.slice(PROSPECT.length))
+      : id ? await ClientFile.open(id) : await ClientFile.openPractice('ccai');
     const had = arr((entry.doc.ccai || {}).sessions).filter(s => s && s.id !== rec.session.id);
     await ClientFile.save(entry, { ccai: { sessions: had.concat([rec.session]) }, lifecycle: { lastPracticeSession: rec.session.createdAt } },
                           'ccai', { keys: ['sessions'] });
-    return id ? (entry.doc.client.name || 'the client') : null;
+    if(!id) return null;
+    const name = entry.doc.client.name || (prospect ? 'the prospect' : 'the client');
+    return 'Saved to ' + name + (prospect ? '’s prospect file.' : '’s client file.');
   }
   async function flush(){
     const rec = S.pending;
     if(!rec) return;
     try{
-      const name = await write(rec);
+      const saved = await write(rec);
       S.pending = null;
-      say(name ? 'Saved to ' + name + '’s client file.' : 'Saved to your practice file (no client).');
+      say(saved || 'Saved to your practice file (no client).');
     }catch(e){
+      // the prospect became a client meanwhile: its client file (same id) takes the session
+      if(e && e.code === 'prospect_converted' && e.clientId){
+        rec.clientId = e.clientId;
+        choose(e.clientId);
+        load();
+        return flush();
+      }
       if(e && e.code === 'not_found'){
         rec.clientId = '';
         choose('');
