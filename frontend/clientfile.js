@@ -22,6 +22,11 @@
 // "Allow on every visit". Browsers without folder access (Firefox, Safari,
 // mobile) use one-file mode: open a single file, save downloads it.
 //
+// Prospects (the suite's LeadGen Hub) may get a file of their own before
+// they are clients: the same format, named `.prospect.json`, under
+// `Prospects/` (see "Prospect files" below). list() never returns one, so no
+// client list or count shows a prospect; Convert makes it a client file.
+//
 // Works in the browser (window.ClientFile) and under node for the tests
 // (module.exports); the folder functions take any object shaped like a
 // FileSystemDirectoryHandle.
@@ -32,6 +37,10 @@ const ClientFile = (function () {
   const EXT = '.client.json';
   const ARCHIVE_DIR = 'archive';
   const PRACTICE_FILE = '_practice' + EXT;
+  // a prospect's own file (LeadGen Hub), in its folder under Prospects/
+  const PROSPECT_EXT = '.prospect.json';
+  const PROSPECTS_DIR = 'Prospects';
+  const isProspectFile = name => String(name || '').toLowerCase().endsWith(PROSPECT_EXT);
   // the consultant's own file (the suite's Planner): personal tasks, the day's
   // focus and notes. At the top of the clients folder, made on first use,
   // never synced anywhere; not a client file, so no app lists it.
@@ -494,9 +503,10 @@ const ClientFile = (function () {
   async function exists(dir, name) {
     try { await dir.getFileHandle(name); return true; } catch (e) { return false; }
   }
-  async function freeName(dir, base) {
-    let name = base + EXT, n = 2;
-    while (await exists(dir, name)) name = `${base}-${n++}${EXT}`;
+  async function freeName(dir, base, ext) {
+    const x = ext || EXT;
+    let name = base + x, n = 2;
+    while (await exists(dir, name)) name = `${base}-${n++}${x}`;
     return name;
   }
   async function writeHandle(fileHandle, doc) {
@@ -613,6 +623,8 @@ const ClientFile = (function () {
   // moves on so the next save only carries later changes.
   async function save(entry, mine, app, opts) {
     if (!entry || !entry.handle) throw new ClientFileError('no_file', 'This client has no file to save to.');
+    // a prospect converted meanwhile (in another tab or app) is a client file now: never written as a prospect again
+    if (isProspectFile(entry.fileName) && entry.dir && !(await exists(entry.dir, entry.handle.name))) await prospectGone(entry);
     let disk = null;
     try { disk = await readHandle(entry.handle); } catch (e) {
       if (e && e.code && e.code !== 'unreadable') throw e;
@@ -623,6 +635,131 @@ const ClientFile = (function () {
     entry.doc = doc;
     entry.base = clone(doc);
     return doc;
+  }
+
+  // ---- prospect files (the suite's LeadGen Hub) ------------------------------------
+  // A prospect gets a file the first time the consultant runs a tool on it
+  // (Run SEO Audit), so its work is saved before it is a client:
+  // `Prospects/<name>/<slug>.prospect.json`, a client file in every way plus
+  // a `prospect` block ({ id: its entry in _prospects.json, placeId, since }).
+  // An app opens and saves it like a client file (openProspect, save); no
+  // client list or count includes it, because list() reads *.client.json only.
+  // The suite fills the shared `client` block with what the consultant
+  // confirmed: name, industry, website, city and the contact person.
+  // Convert (convertProspect) moves it, with every file in its folder, to the
+  // client's own folder as `<slug>.client.json`, keeping its id, so the work
+  // and the reports come along and nothing is copied twice.
+
+  // Every prospect file in the folder: { prospects, unreadable }, newest first.
+  async function listProspects() {
+    const prospects = [], unreadable = [];
+    for (const f of await walk(isProspectFile)) {
+      try {
+        prospects.push({ fileName: f.path, handle: f.handle, doc: await readHandle(f.handle), dir: f.dir, folder: f.folder });
+      } catch (e) {
+        unreadable.push({ fileName: f.path, reason: e.code || 'unreadable' });
+      }
+    }
+    prospects.sort((a, b) => String(b.doc.updatedAt || '').localeCompare(String(a.doc.updatedAt || '')));
+    return { prospects, unreadable };
+  }
+
+  // A prospect that is no longer there: 'prospect_converted' (with the client
+  // file's `fileName` and `clientId`) when it became a client, else not_found.
+  async function prospectGone(entryOrId) {
+    const id = typeof entryOrId === 'string' ? entryOrId : ((entryOrId.base || entryOrId.doc || {}).id || '');
+    const { clients } = await list();
+    const c = id && clients.find(x => x.doc.id === id);
+    if (c) {
+      const err = new ClientFileError('prospect_converted', 'This prospect is now a client.');
+      err.fileName = c.fileName; err.clientId = c.doc.id;
+      throw err;
+    }
+    throw new ClientFileError('not_found', 'That prospect is not in your clients folder.');
+  }
+
+  // One prospect file, by its id (the `?prospect=<id>` the suite opens an app with).
+  async function openProspect(id) {
+    const { prospects } = await listProspects();
+    const hit = prospects.find(p => p.doc.id === id);
+    if (!hit) await prospectGone(String(id || ''));
+    return { fileName: hit.fileName, handle: hit.handle, doc: hit.doc, base: clone(hit.doc), dir: hit.dir, folder: hit.folder };
+  }
+
+  // A new prospect file: `client` is the client block's fields (at least the
+  // name), `prospect` { id, placeId } links it to its entry in
+  // _prospects.json. Its own folder under Prospects/, a new one per prospect
+  // (two prospects with one name never share a folder).
+  async function createProspect(client, prospect, app) {
+    const root = requireDir();
+    const doc = blank(client, app);
+    const p = isObj(prospect) ? prospect : {};
+    doc.prospect = { id: String(p.id || ''), placeId: String(p.placeId || ''), since: doc.updatedAt };
+    const top = await root.getDirectoryHandle(PROSPECTS_DIR, { create: true });
+    const leaf = folderNameFor(doc.client.name);
+    let name = leaf, n = 2;
+    while (await dirExists(top, name)) name = `${leaf}-${n++}`;
+    const dir = await top.getDirectoryHandle(name, { create: true });
+    const fileName = await freeName(dir, slugify(doc.client.name), PROSPECT_EXT);
+    const handle = await dir.getFileHandle(fileName, { create: true });
+    await writeHandle(handle, doc);
+    const folder = PROSPECTS_DIR + '/' + name;
+    return { fileName: folder + '/' + fileName, handle, doc, base: clone(doc), dir, folder };
+  }
+
+  // Convert: the prospect file becomes `<slug>.client.json` in the client's
+  // own folder (made, or the one already there, as create() does), same id,
+  // `client` updated with `client` (the name and industry the consultant
+  // confirmed) and `prospect.convertedAt` set. The other files in the
+  // prospect's own folder (its exported reports) move with it, renamed only
+  // if the client folder already has one by that name. The client file is
+  // written before anything is removed. `target`: an entry or its fileName.
+  async function convertProspect(target, client, app) {
+    const root = requireDir();
+    const path = typeof target === 'string' ? target : target.fileName;
+    const all = await walk(isProspectFile);
+    const me = all.find(f => f.path === path);
+    if (!me) await prospectGone(typeof target === 'string' ? '' : target);
+    const now = new Date().toISOString();
+    const doc = clone(await readHandle(me.handle));
+    doc.client = Object.assign(doc.client, isObj(client) ? clone(client) : {});
+    doc.prospect = Object.assign({}, isObj(doc.prospect) ? doc.prospect : {}, { convertedAt: now });
+    doc.updatedAt = now;
+    doc.updatedBy = APPS.includes(app) ? app : 'suite';
+    const folder = folderNameFor(doc.client.name);
+    const dir = await root.getDirectoryHandle(folder, { create: true });
+    const fileName = await freeName(dir, slugify(doc.client.name));
+    const handle = await dir.getFileHandle(fileName, { create: true });
+    await writeHandle(handle, doc);
+    // the prospect's own folder: under Prospects/, no other prospect in it or under it
+    const own = me.folder.startsWith(PROSPECTS_DIR + '/') &&
+      !all.some(f => f !== me && (f.folder === me.folder || f.folder.startsWith(me.folder + '/')));
+    await me.dir.removeEntry(me.name);
+    if (own) {
+      for await (const entry of me.dir.values()) {
+        if (entry.kind === 'directory') {
+          let n = entry.name, i = 2;
+          while (await dirExists(dir, n)) n = `${entry.name}-${i++}`;
+          await copyDir(entry, await dir.getDirectoryHandle(n, { create: true }));
+          continue;
+        }
+        const dot = entry.name.lastIndexOf('.');
+        const stem = dot > 0 ? entry.name.slice(0, dot) : entry.name, ext = dot > 0 ? entry.name.slice(dot) : '';
+        let n = entry.name, i = 2;
+        while (await exists(dir, n)) n = `${stem}-${i++}${ext}`;
+        const f = await entry.getFile();
+        const data = typeof f.arrayBuffer === 'function' ? await f.arrayBuffer() : await f.text();
+        const w = await (await dir.getFileHandle(n, { create: true })).createWritable();
+        await w.write(data);
+        await w.close();
+      }
+      const parts = me.folder.split('/');
+      const leaf = parts.pop();
+      let parent = root;
+      for (const p of parts) parent = await parent.getDirectoryHandle(p);
+      await parent.removeEntry(leaf, { recursive: true });
+    }
+    return { fileName: folder + '/' + fileName, handle, doc, base: clone(doc), dir, folder };
   }
 
   // ---- the consultant's own file (_me.json) ------------------------------------
@@ -789,9 +926,10 @@ const ClientFile = (function () {
   }
 
   return {
-    FORMAT, VERSION, EXT, ARCHIVE_DIR, PRACTICE_FILE, ME_FILE, APPS, SECTION_APPS, STAGES, LIFECYCLE_FLAGS, LIFECYCLE_DATES,
+    FORMAT, VERSION, EXT, ARCHIVE_DIR, PRACTICE_FILE, ME_FILE, PROSPECT_EXT, PROSPECTS_DIR, isProspectFile, APPS, SECTION_APPS, STAGES, LIFECYCLE_FLAGS, LIFECYCLE_DATES,
     ClientFileError, newId, slugify, nameKey, blank, normalize, parse, serialize, merge, mergeFields, mergeSection, mergeCalendar, mergeMeetings, mergeTasks,
     hasFolderAccess, restore, reconnect, pick, pickLocal, useFolder, folderName, inCloud, cloudFailed, cloudProblem: () => CLOUD_PROBLEM, walk, folderNameFor, list, open, openPractice, openMe, saveMe, branding, create, save, archive,
+    listProspects, openProspect, createProspect, convertProspect,
     openOneFile, downloadOneFile,
   };
 })();
